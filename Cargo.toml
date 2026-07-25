@@ -1,12 +1,22 @@
-[package]
-name = "astra"
-version = "0.1.0"
-edition = "2021"
-description = "AstraOS command center for macOS developer workstations"
-license = "MIT"
+[workspace]
+resolver = "2"
 
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1
-panic = "abort"
+members = [
+  "apps/astra-cli",
+  "crates/astra-core",
+  "crates/astra-system",
+  "crates/astra-workspaces",
+  "crates/astra-projects",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+authors = ["Anthony"]
+
+[workspace.dependencies]
+astra-core = { path = "crates/astra-core" }
+astra-system = { path = "crates/astra-system" }
+astra-workspaces = { path = "crates/astra-workspaces" }
+astra-projects = { path = "crates/astra-projects" }
