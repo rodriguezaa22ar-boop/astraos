@@ -8,6 +8,7 @@ members = [
     "crates/astra-system",
     "crates/astra-workspaces",
     "crates/astra-projects",
+    "crates/astra-dashboard",
 ]
 
 default-members = [
@@ -25,6 +26,7 @@ documentation = "https://github.com/rodriguezaa22ar-boop/astraos"
 rust-version = "1.97"
 
 [workspace.dependencies]
+astra-dashboard = { path = "crates/astra-dashboard" }
 
 # Internal crates
 astra-core = { path = "crates/astra-core" }
