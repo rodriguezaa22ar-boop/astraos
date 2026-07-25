@@ -1,107 +1,162 @@
+use astra_config::{config_path, load, save, Config};
+use astra_core::VERSION;
+use astra_dashboard::run_dashboard;
+use astra_projects::valid_project_name;
+use astra_system::{command_exists, command_output};
+use astra_workspaces::{astra_root, workspace_path};
+use clap::{Parser, Subcommand};
 use std::{
     env, fs,
     path::Path,
     process::{Command, ExitCode, Stdio},
 };
+use tracing::{error, info};
 
-use astra_core::VERSION;
-use astra_projects::valid_project_name;
-use astra_system::{command_exists, command_output};
-use astra_workspaces::{astra_root, workspace_path};
+#[derive(Debug, Parser)]
+#[command(name = "astra", version = VERSION, about = "AstraOS command center")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    Dashboard {
+        #[arg(long)]
+        interactive: bool,
+    },
+    Doctor,
+    Workspace {
+        name: String,
+    },
+    Project {
+        kind: String,
+        name: String,
+    },
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommands {
+    Path,
+    Show,
+    Init {
+        #[arg(long)]
+        force: bool,
+    },
+}
 
 fn main() -> ExitCode {
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_max_level(tracing::Level::WARN)
+        .compact()
+        .init();
+
     match run() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("astra: {error}");
+        Err(message) => {
+            error!("{message}");
+            eprintln!("astra: {message}");
             ExitCode::FAILURE
         }
     }
 }
 
 fn run() -> Result<(), String> {
-    let mut arguments = env::args().skip(1);
-    let command = arguments.next().unwrap_or_else(|| "dashboard".to_string());
+    let cli = Cli::parse();
 
-    match command.as_str() {
-        "dashboard" => dashboard(),
-
-        "doctor" => doctor(),
-
-        "workspace" | "open" => {
-            let name = arguments.next().ok_or("usage: astra workspace <name>")?;
-
-            open_workspace(&name)
+    match cli
+        .command
+        .unwrap_or(Commands::Dashboard { interactive: false })
+    {
+        Commands::Dashboard { interactive } => {
+            if interactive {
+                run_dashboard().map_err(|error| error.to_string())
+            } else {
+                dashboard()
+            }
         }
+        Commands::Doctor => doctor(),
+        Commands::Workspace { name } => open_workspace(&name),
+        Commands::Project { kind, name } => create_project(&kind, &name),
+        Commands::Config { command } => config_command(command),
+    }
+}
 
-        "project" => {
-            let project_type = arguments
-                .next()
-                .ok_or("usage: astra project <node|python|static> <name>")?;
-
-            let name = arguments
-                .next()
-                .ok_or("usage: astra project <node|python|static> <name>")?;
-
-            create_project(&project_type, &name)
-        }
-
-        "version" | "--version" | "-V" => {
-            println!("astra {VERSION}");
+fn config_command(command: ConfigCommands) -> Result<(), String> {
+    match command {
+        ConfigCommands::Path => {
+            println!("{}", config_path().display());
             Ok(())
         }
-
-        "help" | "--help" | "-h" => {
-            print_help();
+        ConfigCommands::Show => {
+            let config = load().map_err(|error| error.to_string())?;
+            let rendered = toml::to_string_pretty(&config).map_err(|error| error.to_string())?;
+            print!("{rendered}");
             Ok(())
         }
+        ConfigCommands::Init { force } => {
+            let path = config_path();
 
-        unknown => Err(format!("unknown command: {unknown}\n\nRun `astra help`.")),
+            if path.exists() && !force {
+                return Err(format!(
+                    "configuration already exists at {}; use --force to overwrite it",
+                    path.display()
+                ));
+            }
+
+            let config = Config::default();
+            save(&config).map_err(|error| error.to_string())?;
+            info!("configuration initialized");
+            println!("✓ Created {}", path.display());
+            Ok(())
+        }
     }
 }
 
 fn dashboard() -> Result<(), String> {
+    let config = load().map_err(|error| error.to_string())?;
+
     println!("════════════════════════════════════════════════════");
     println!("              ASTRA COMMAND CENTER");
     println!("════════════════════════════════════════════════════");
 
     let user = env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-
     let hostname = command_output("hostname", &[]).unwrap_or_else(|| "unknown".to_string());
-
-    let macos_version =
+    let macos =
         command_output("sw_vers", &["-productVersion"]).unwrap_or_else(|| "unknown".to_string());
 
     println!("Version:   {VERSION}");
     println!("Host:      {hostname}");
     println!("User:      {user}");
-    println!("macOS:     {macos_version}");
-    println!("Workspace: {}", astra_root().display());
+    println!("macOS:     {macos}");
+    println!("Workspace: {}", config.workspace.root);
 
     println!("\nSystem");
-
     for tool in [
         "brew", "git", "gh", "node", "python3", "docker", "codex", "ollama",
     ] {
-        print_tool_status(tool);
+        let marker = if command_exists(tool) { "✓" } else { "!" };
+        println!("{marker} {tool}");
     }
 
     println!("\nProjects");
-
-    for (label, workspace_name) in [
+    for (label, key) in [
         ("Astraeus Omnia", "omnia"),
         ("Omnia API Foundry", "api"),
         ("Games", "games"),
         ("Cybersecurity", "cyber"),
         ("AI Lab", "ai"),
     ] {
-        let exists = workspace_path(workspace_name)
+        let exists = workspace_path(key)
             .map(|path| path.exists())
             .unwrap_or(false);
-
-        let symbol = if exists { "✓" } else { "!" };
-
-        println!("{symbol} {label}");
+        let marker = if exists { "✓" } else { "!" };
+        println!("{marker} {label}");
     }
 
     Ok(())
@@ -110,13 +165,13 @@ fn dashboard() -> Result<(), String> {
 fn doctor() -> Result<(), String> {
     println!("AstraOS Doctor\n");
 
-    let required_tools = [
+    let required = [
         "brew", "git", "gh", "node", "npm", "pnpm", "python3", "uv", "jq", "yq", "rg", "fd", "fzf",
     ];
 
     let mut failures = 0;
 
-    for tool in required_tools {
+    for tool in required {
         if command_exists(tool) {
             println!("✓ {tool}");
         } else {
@@ -126,7 +181,6 @@ fn doctor() -> Result<(), String> {
     }
 
     println!("\nAuthentication");
-
     if command_success("gh", &["auth", "status"]) {
         println!("✓ GitHub authenticated");
     } else {
@@ -134,13 +188,11 @@ fn doctor() -> Result<(), String> {
     }
 
     println!("\nSystem Security");
-
     run_passthrough("csrutil", &["status"]);
     run_passthrough("spctl", &["--status"]);
     run_passthrough("fdesetup", &["status"]);
 
     println!("\nStorage");
-
     run_passthrough("df", &["-h", "/"]);
 
     if failures == 0 {
@@ -152,40 +204,36 @@ fn doctor() -> Result<(), String> {
 }
 
 fn open_workspace(name: &str) -> Result<(), String> {
+    let config = load().map_err(|error| error.to_string())?;
     let path = workspace_path(name).ok_or_else(|| format!("unknown workspace: {name}"))?;
 
     fs::create_dir_all(&path)
         .map_err(|error| format!("could not create workspace {}: {error}", path.display()))?;
 
-    if command_exists("code") {
-        Command::new("code")
+    if command_exists(&config.editor.command) {
+        Command::new(&config.editor.command)
             .arg(&path)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|error| format!("failed to open VS Code: {error}"))?;
+            .map_err(|error| format!("failed to open editor: {error}"))?;
     }
 
     match name {
-        "ai" => {
-            start_ollama();
-        }
-
+        "ai" => start_ollama(),
         "cyber" => {
             open_application("Wireshark");
             open_application("Burp Suite");
         }
-
         _ => {}
     }
 
     println!("✓ Opened {name} workspace");
     println!("{}", path.display());
-
     Ok(())
 }
 
-fn create_project(project_type: &str, name: &str) -> Result<(), String> {
+fn create_project(kind: &str, name: &str) -> Result<(), String> {
     if !valid_project_name(name) {
         return Err(
             "project name may contain only letters, numbers, dots, dashes, and underscores"
@@ -193,61 +241,44 @@ fn create_project(project_type: &str, name: &str) -> Result<(), String> {
         );
     }
 
-    let project_path = astra_root().join("projects").join(name);
+    let path = astra_root().join("projects").join(name);
 
-    if project_path.exists() {
-        return Err(format!(
-            "project already exists: {}",
-            project_path.display()
-        ));
+    if path.exists() {
+        return Err(format!("project already exists: {}", path.display()));
     }
 
-    fs::create_dir_all(&project_path)
+    fs::create_dir_all(&path)
         .map_err(|error| format!("could not create project directory: {error}"))?;
 
-    run_in_directory(&project_path, "git", &["init", "-b", "main"])?;
+    run_in_directory(&path, "git", &["init", "-b", "main"])?;
 
-    let result = match project_type {
-        "node" => create_node_project(&project_path),
-        "python" => create_python_project(&project_path),
-        "static" => create_static_project(&project_path),
+    let result = match kind {
+        "node" => create_node_project(&path),
+        "python" => create_python_project(&path),
+        "static" => create_static_project(&path),
         unsupported => Err(format!("unsupported project type: {unsupported}")),
     };
 
     if let Err(error) = result {
-        let _ = fs::remove_dir_all(&project_path);
+        let _ = fs::remove_dir_all(&path);
         return Err(error);
     }
 
     fs::write(
-        project_path.join("README.md"),
+        path.join("README.md"),
         format!("# {name}\n\nCreated with AstraOS.\n"),
     )
     .map_err(|error| format!("could not write README.md: {error}"))?;
 
-    let _ = run_in_directory(&project_path, "git", &["add", "."]);
+    let _ = run_in_directory(&path, "git", &["add", "."]);
+    let _ = run_in_directory(&path, "git", &["commit", "-m", "chore: initialize project"]);
 
-    let _ = run_in_directory(
-        &project_path,
-        "git",
-        &["commit", "-m", "chore: initialize project"],
-    );
-
-    if command_exists("code") {
-        let _ = Command::new("code").arg(&project_path).spawn();
-    }
-
-    println!(
-        "✓ Created {project_type} project: {}",
-        project_path.display()
-    );
-
+    println!("✓ Created {kind} project: {}", path.display());
     Ok(())
 }
 
 fn create_node_project(path: &Path) -> Result<(), String> {
     run_in_directory(path, "npm", &["init", "-y"])?;
-
     run_in_directory(
         path,
         "npm",
@@ -261,107 +292,46 @@ fn create_node_project(path: &Path) -> Result<(), String> {
             "vitest",
         ],
     )?;
-
     run_in_directory(path, "npx", &["tsc", "--init"])?;
 
     fs::create_dir_all(path.join("src")).map_err(|error| error.to_string())?;
-
     fs::create_dir_all(path.join("test")).map_err(|error| error.to_string())?;
-
     fs::write(
         path.join("src/index.ts"),
-        concat!(
-            "export function main(): void {\n",
-            "  console.log(\"Astra project ready.\");\n",
-            "}\n\n",
-            "main();\n"
-        ),
+        "export function main(): void {\n  console.log(\"Astra project ready.\");\n}\n\nmain();\n",
     )
     .map_err(|error| error.to_string())?;
-
     fs::write(
         path.join(".gitignore"),
-        concat!(
-            "node_modules/\n",
-            "dist/\n",
-            ".env\n",
-            ".DS_Store\n",
-            "coverage/\n"
-        ),
+        "node_modules/\ndist/\n.env\n.DS_Store\ncoverage/\n",
     )
     .map_err(|error| error.to_string())?;
-
     Ok(())
 }
 
 fn create_python_project(path: &Path) -> Result<(), String> {
     run_in_directory(path, "uv", &["init"])?;
-
     fs::create_dir_all(path.join("tests")).map_err(|error| error.to_string())?;
-
     fs::write(
         path.join(".gitignore"),
-        concat!(
-            ".venv/\n",
-            "__pycache__/\n",
-            ".pytest_cache/\n",
-            ".env\n",
-            ".DS_Store\n"
-        ),
+        ".venv/\n__pycache__/\n.pytest_cache/\n.env\n.DS_Store\n",
     )
     .map_err(|error| error.to_string())?;
-
     Ok(())
 }
 
 fn create_static_project(path: &Path) -> Result<(), String> {
     fs::write(
         path.join("index.html"),
-        concat!(
-            "<!doctype html>\n",
-            "<html lang=\"en\">\n",
-            "<head>\n",
-            "  <meta charset=\"utf-8\">\n",
-            "  <meta name=\"viewport\" ",
-            "content=\"width=device-width,initial-scale=1\">\n",
-            "  <title>Astra Project</title>\n",
-            "</head>\n",
-            "<body>\n",
-            "  <main>\n",
-            "    <h1>Astra Project Ready</h1>\n",
-            "  </main>\n",
-            "</body>\n",
-            "</html>\n"
-        ),
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n  <title>Astra Project</title>\n</head>\n<body>\n  <main><h1>Astra Project Ready</h1></main>\n</body>\n</html>\n",
     )
     .map_err(|error| error.to_string())?;
-
     Ok(())
 }
 
-fn start_ollama() {
-    if !command_exists("brew") {
-        return;
-    }
-
-    let _ = Command::new("brew")
-        .args(["services", "start", "ollama"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-fn open_application(name: &str) {
-    let _ = Command::new("open")
-        .args(["-a", name])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-}
-
-fn command_success(command: &str, arguments: &[&str]) -> bool {
+fn command_success(command: &str, args: &[&str]) -> bool {
     Command::new(command)
-        .args(arguments)
+        .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -369,14 +339,14 @@ fn command_success(command: &str, arguments: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-fn run_passthrough(command: &str, arguments: &[&str]) {
-    let _ = Command::new(command).args(arguments).status();
+fn run_passthrough(command: &str, args: &[&str]) {
+    let _ = Command::new(command).args(args).status();
 }
 
-fn run_in_directory(directory: &Path, command: &str, arguments: &[&str]) -> Result<(), String> {
+fn run_in_directory(directory: &Path, command: &str, args: &[&str]) -> Result<(), String> {
     let status = Command::new(command)
         .current_dir(directory)
-        .args(arguments)
+        .args(args)
         .status()
         .map_err(|error| format!("failed to run {command}: {error}"))?;
 
@@ -387,31 +357,20 @@ fn run_in_directory(directory: &Path, command: &str, arguments: &[&str]) -> Resu
     }
 }
 
-fn print_tool_status(tool: &str) {
-    let symbol = if command_exists(tool) { "✓" } else { "!" };
-
-    println!("{symbol} {tool}");
+fn start_ollama() {
+    if command_exists("brew") {
+        let _ = Command::new("brew")
+            .args(["services", "start", "ollama"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
 }
 
-fn print_help() {
-    println!(
-        "AstraOS {VERSION}
-
-Usage:
-  astra dashboard
-  astra doctor
-  astra workspace <name>
-  astra project <node|python|static> <name>
-  astra version
-  astra help
-
-Workspaces:
-  omnia
-  api
-  games
-  cyber
-  ai
-  learning
-  projects"
-    );
+fn open_application(name: &str) {
+    let _ = Command::new("open")
+        .args(["-a", name])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
 }

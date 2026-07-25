@@ -3,9 +3,16 @@ name = "astra"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
 
 [dependencies]
+toml.workspace = true
 astra-core.workspace = true
+astra-config.workspace = true
+astra-dashboard.workspace = true
 astra-system.workspace = true
 astra-workspaces.workspace = true
 astra-projects.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
