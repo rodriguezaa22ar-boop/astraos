@@ -4,4 +4,26 @@ version = 4
 
 [[package]]
 name = "astra"
-version = "0.1.0"
+version = "0.2.0"
+dependencies = [
+ "astra-core",
+ "astra-projects",
+ "astra-system",
+ "astra-workspaces",
+]
+
+[[package]]
+name = "astra-core"
+version = "0.2.0"
+
+[[package]]
+name = "astra-projects"
+version = "0.2.0"
+
+[[package]]
+name = "astra-system"
+version = "0.2.0"
+
+[[package]]
+name = "astra-workspaces"
+version = "0.2.0"

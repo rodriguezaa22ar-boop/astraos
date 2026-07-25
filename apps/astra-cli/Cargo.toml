@@ -1,0 +1,11 @@
+[package]
+name = "astra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+astra-core.workspace = true
+astra-system.workspace = true
+astra-workspaces.workspace = true
+astra-projects.workspace = true
