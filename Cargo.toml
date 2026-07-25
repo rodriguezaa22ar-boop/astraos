@@ -2,21 +2,76 @@
 resolver = "2"
 
 members = [
-  "apps/astra-cli",
-  "crates/astra-core",
-  "crates/astra-system",
-  "crates/astra-workspaces",
-  "crates/astra-projects",
+    "apps/astra-cli",
+    "crates/astra-core",
+    "crates/astra-config",
+    "crates/astra-system",
+    "crates/astra-workspaces",
+    "crates/astra-projects",
+]
+
+default-members = [
+    "apps/astra-cli",
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 authors = ["Anthony"]
+repository = "https://github.com/rodriguezaa22ar-boop/astraos"
+homepage = "https://github.com/rodriguezaa22ar-boop/astraos"
+documentation = "https://github.com/rodriguezaa22ar-boop/astraos"
+rust-version = "1.97"
 
 [workspace.dependencies]
+
+# Internal crates
 astra-core = { path = "crates/astra-core" }
+astra-config = { path = "crates/astra-config" }
 astra-system = { path = "crates/astra-system" }
 astra-workspaces = { path = "crates/astra-workspaces" }
 astra-projects = { path = "crates/astra-projects" }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+
+# Filesystem
+dirs = "6"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUIDs
+uuid = { version = "1", features = ["v4"] }
+
+# Terminal UI (future dashboard)
+ratatui = "0.29"
+crossterm = "0.29"
+
+# Testing
+tempfile = "3"
+
+[profile.dev]
+debug = true
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
