@@ -8,5 +8,6 @@ authors.workspace = true
 [dependencies]
 ratatui.workspace = true
 crossterm.workspace = true
+astra-config.workspace = true
 astra-system.workspace = true
 astra-workspaces.workspace = true

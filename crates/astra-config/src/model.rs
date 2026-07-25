@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -6,6 +7,9 @@ pub struct Config {
     pub editor: EditorConfig,
     pub ai: AiConfig,
     pub cyber: CyberConfig,
+
+    #[serde(default)]
+    pub workspaces: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

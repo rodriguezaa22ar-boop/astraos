@@ -92,6 +92,7 @@ version = "0.3.0"
 name = "astra-dashboard"
 version = "0.3.0"
 dependencies = [
+ "astra-config",
  "astra-system",
  "astra-workspaces",
  "crossterm 0.29.0",
@@ -109,6 +110,9 @@ version = "0.3.0"
 [[package]]
 name = "astra-workspaces"
 version = "0.3.0"
+dependencies = [
+ "astra-config",
+]
 
 [[package]]
 name = "bitflags"

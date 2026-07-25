@@ -1,3 +1,7 @@
+use astra_config::load;
+use astra_system::command_exists;
+use astra_workspaces::astra_root;
+
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -15,9 +19,6 @@ use std::{
     io::{self, stdout},
     time::Duration,
 };
-
-use astra_system::command_exists;
-use astra_workspaces::astra_root;
 
 pub fn run_dashboard() -> io::Result<()> {
     enable_raw_mode()?;
@@ -38,6 +39,9 @@ pub fn run_dashboard() -> io::Result<()> {
 }
 
 fn run_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
+    let config = load().unwrap_or_default();
+    let root = astra_root(&config);
+
     loop {
         terminal.draw(|frame| {
             let chunks = Layout::default()
@@ -52,6 +56,7 @@ fn run_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Res
             let title = Paragraph::new("ASTRA COMMAND CENTER")
                 .style(Style::default().add_modifier(Modifier::BOLD))
                 .block(Block::default().borders(Borders::ALL));
+
             frame.render_widget(title, chunks[0]);
 
             let body = Layout::default()
@@ -65,15 +70,16 @@ fn run_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Res
             .into_iter()
             .map(|tool| {
                 let marker = if command_exists(tool) { "✓" } else { "!" };
+
                 ListItem::new(Line::from(format!("{marker} {tool}")))
             })
             .collect::<Vec<_>>();
 
             let systems =
                 List::new(tools).block(Block::default().title("System").borders(Borders::ALL));
+
             frame.render_widget(systems, body[0]);
 
-            let root = astra_root();
             let projects = [
                 ("Astraeus Omnia", root.join("astraeus-omnia")),
                 ("Omnia API Foundry", root.join("omnia-api-foundry")),
@@ -84,16 +90,19 @@ fn run_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Res
             .into_iter()
             .map(|(name, path)| {
                 let marker = if path.exists() { "✓" } else { "!" };
+
                 ListItem::new(Line::from(format!("{marker} {name}")))
             })
             .collect::<Vec<_>>();
 
             let project_list =
                 List::new(projects).block(Block::default().title("Projects").borders(Borders::ALL));
+
             frame.render_widget(project_list, body[1]);
 
             let footer = Paragraph::new("Press q or Esc to exit")
                 .block(Block::default().borders(Borders::ALL));
+
             frame.render_widget(footer, chunks[2]);
         })?;
 
