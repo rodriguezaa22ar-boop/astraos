@@ -152,7 +152,7 @@ fn dashboard() -> Result<(), String> {
         ("Cybersecurity", "cyber"),
         ("AI Lab", "ai"),
     ] {
-        let exists = workspace_path(key)
+        let exists = workspace_path(&config, key)
             .map(|path| path.exists())
             .unwrap_or(false);
         let marker = if exists { "✓" } else { "!" };
@@ -205,7 +205,7 @@ fn doctor() -> Result<(), String> {
 
 fn open_workspace(name: &str) -> Result<(), String> {
     let config = load().map_err(|error| error.to_string())?;
-    let path = workspace_path(name).ok_or_else(|| format!("unknown workspace: {name}"))?;
+    let path = workspace_path(&config, name).ok_or_else(|| format!("unknown workspace: {name}"))?;
 
     fs::create_dir_all(&path)
         .map_err(|error| format!("could not create workspace {}: {error}", path.display()))?;
@@ -234,6 +234,7 @@ fn open_workspace(name: &str) -> Result<(), String> {
 }
 
 fn create_project(kind: &str, name: &str) -> Result<(), String> {
+    let config = load().map_err(|error| error.to_string())?;
     if !valid_project_name(name) {
         return Err(
             "project name may contain only letters, numbers, dots, dashes, and underscores"
@@ -241,7 +242,7 @@ fn create_project(kind: &str, name: &str) -> Result<(), String> {
         );
     }
 
-    let path = astra_root().join("projects").join(name);
+    let path = astra_root(&config).join("projects").join(name);
 
     if path.exists() {
         return Err(format!("project already exists: {}", path.display()));
