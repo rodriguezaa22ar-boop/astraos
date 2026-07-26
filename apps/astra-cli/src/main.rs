@@ -3,7 +3,10 @@ use astra_core::VERSION;
 use astra_dashboard::run_dashboard;
 use astra_projects::valid_project_name;
 use astra_system::{command_exists, command_output};
-use astra_workspaces::{astra_root, workspace_path};
+use astra_workspaces::{
+    add_workspace as add_workspace_entry, astra_root, list_workspaces as list_workspace_entries,
+    remove_workspace as remove_workspace_entry, workspace_path,
+};
 use clap::{Parser, Subcommand};
 use std::{
     env, fs,
@@ -27,7 +30,8 @@ enum Commands {
     },
     Doctor,
     Workspace {
-        name: String,
+        #[command(subcommand)]
+        command: WorkspaceCommands,
     },
     Project {
         kind: String,
@@ -36,6 +40,25 @@ enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum WorkspaceCommands {
+    List,
+    Add {
+        name: String,
+        path: String,
+        #[arg(long)]
+        force: bool,
+    },
+    Remove {
+        name: String,
+    },
+    Open {
+        name: String,
+        #[arg(long)]
+        create: bool,
     },
 }
 
@@ -81,7 +104,7 @@ fn run() -> Result<(), String> {
             }
         }
         Commands::Doctor => doctor(),
-        Commands::Workspace { name } => open_workspace(&name),
+        Commands::Workspace { command } => workspace_command(command),
         Commands::Project { kind, name } => create_project(&kind, &name),
         Commands::Config { command } => config_command(command),
     }
@@ -116,6 +139,43 @@ fn config_command(command: ConfigCommands) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+fn workspace_command(command: WorkspaceCommands) -> Result<(), String> {
+    match command {
+        WorkspaceCommands::List => list_workspaces(),
+        WorkspaceCommands::Add { name, path, force } => add_workspace(&name, &path, force),
+        WorkspaceCommands::Remove { name } => remove_workspace(&name),
+        WorkspaceCommands::Open { name, create } => open_workspace(&name, create),
+    }
+}
+
+fn list_workspaces() -> Result<(), String> {
+    let config = load().map_err(|error| error.to_string())?;
+
+    for (name, path) in list_workspace_entries(&config) {
+        println!("{name}\t{path}");
+    }
+
+    Ok(())
+}
+
+fn add_workspace(name: &str, path: &str, force: bool) -> Result<(), String> {
+    let mut config = load().map_err(|error| error.to_string())?;
+    add_workspace_entry(&mut config, name, path, force).map_err(|error| error.to_string())?;
+    save(&config).map_err(|error| error.to_string())?;
+
+    println!("✓ Added workspace {name}");
+    Ok(())
+}
+
+fn remove_workspace(name: &str) -> Result<(), String> {
+    let mut config = load().map_err(|error| error.to_string())?;
+    remove_workspace_entry(&mut config, name).map_err(|error| error.to_string())?;
+    save(&config).map_err(|error| error.to_string())?;
+
+    println!("✓ Removed workspace {name}");
+    Ok(())
 }
 
 fn dashboard() -> Result<(), String> {
@@ -203,12 +263,21 @@ fn doctor() -> Result<(), String> {
     }
 }
 
-fn open_workspace(name: &str) -> Result<(), String> {
+fn open_workspace(name: &str, create: bool) -> Result<(), String> {
     let config = load().map_err(|error| error.to_string())?;
     let path = workspace_path(&config, name).ok_or_else(|| format!("unknown workspace: {name}"))?;
 
-    fs::create_dir_all(&path)
-        .map_err(|error| format!("could not create workspace {}: {error}", path.display()))?;
+    if !path.exists() {
+        if !create {
+            return Err(format!(
+                "workspace directory does not exist: {} (use --create to create it)",
+                path.display()
+            ));
+        }
+
+        fs::create_dir_all(&path)
+            .map_err(|error| format!("could not create workspace {}: {error}", path.display()))?;
+    }
 
     if command_exists(&config.editor.command) {
         Command::new(&config.editor.command)
