@@ -5,3 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+sysinfo.workspace = true
+starship-battery.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

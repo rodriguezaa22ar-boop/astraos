@@ -148,29 +148,29 @@ EOF
 
 write_milestone_6() {
   cat > docs/milestones/06-live-dashboard.md <<'EOF'
-# Milestone 6: Live Interactive Dashboard
+# Milestone 6: Live Dashboard
 
 ## User capability
 
-Users can view a live command center and open workspaces with the keyboard.
+Users can view a live command center with local system, developer-service, and
+workspace status.
 
 ## Required dashboard information
 
+- Operating system and hostname
 - CPU utilization
 - Memory used and total
 - Battery percentage and charging state
-- Root-disk usage
+- Selected-workspace filesystem usage
 - System uptime
-- Docker availability and daemon status
-- Ollama availability and service status
-- GitHub authentication status
-- Configured workspaces and directory existence
+- Docker daemon status
+- Ollama local-service status
+- Configured workspace names and paths
 
 ## Required controls
 
 ```text
 Up/Down or J/K  Select workspace
-Enter           Open selected workspace
 R               Refresh immediately
 Q or Esc        Quit
 ```
@@ -179,18 +179,21 @@ Q or Esc        Quit
 
 - Refreshes without flicker at a controlled interval.
 - Restores the terminal after normal exit and errors.
-- Does not panic when a system command is missing.
+- Does not panic when optional metrics or services are unavailable.
 - Uses `astra-system` for metrics collection.
 - Uses `astra-workspaces` for registry data.
 - Displays unavailable metrics clearly.
-- Includes unit tests for parsing system-command output.
+- Does not run probes from rendering functions.
+- Uses separate render/input and metrics-refresh timing.
+- Uses bounded Docker and Ollama probes.
+- Includes unit tests for state transitions, formatting, and probe mapping.
 
 ## Architecture
 
 - `astra-system`: metric collection and typed snapshots.
 - `astra-dashboard`: application state, input handling, rendering.
 - `astra-cli`: command routing only.
-- Avoid running expensive commands during every render call.
+- Avoid running expensive probes during every render call.
 
 ## Validation
 

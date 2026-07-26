@@ -57,6 +57,10 @@ clap = { version = "4", features = ["derive"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# System information
+sysinfo = "0.39"
+starship-battery = "0.11"
+
 # UUIDs
 uuid = { version = "1", features = ["v4"] }
 
