@@ -1,4 +1,4 @@
-use crate::model::{AiConfig, Config, CyberConfig, EditorConfig, WorkspaceConfig};
+use crate::model::{AiConfig, Config, CyberConfig, EditorConfig, TerminalConfig, WorkspaceConfig};
 use std::collections::BTreeMap;
 
 impl Default for Config {
@@ -47,6 +47,8 @@ impl Default for Config {
                 labs: format!("{home}/Developer/cybersecurity/labs"),
             },
             workspaces,
+            terminal: TerminalConfig::default(),
+            workspace_layouts: BTreeMap::new(),
         }
     }
 }

@@ -161,6 +161,8 @@ mod tests {
                 labs: "/tmp/cyber".to_string(),
             },
             workspaces: BTreeMap::new(),
+            terminal: Default::default(),
+            workspace_layouts: BTreeMap::new(),
         }
     }
 

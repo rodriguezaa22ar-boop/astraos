@@ -13,6 +13,7 @@ astra-dashboard.workspace = true
 astra-system.workspace = true
 astra-workspaces.workspace = true
 astra-projects.workspace = true
+astra-terminal.workspace = true
 clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

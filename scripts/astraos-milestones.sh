@@ -218,8 +218,8 @@ A single AstraOS command restores a complete development cockpit.
 ## Required commands
 
 ```text
-astra workspace launch <name>
-astra workspace layout <name>
+astra workspace layout <layout-name>
+astra workspace launch <workspace-name> [--layout <layout-name>] [--dry-run]
 ```
 
 ## Configuration schema
@@ -231,33 +231,32 @@ command = "wezterm"
 [workspace_layouts.astraos]
 editor = true
 ollama = false
-panes = [
-  "cargo watch -x check",
-  "git status",
-]
+
+[[workspace_layouts.astraos.tabs]]
+name = "development"
+command = []
+
+[[workspace_layouts.astraos.tabs.panes]]
+target = 0
+direction = "right"
+percent = 45
+command = ["cargo", "watch", "-x", "check"]
 ```
 
 ## Acceptance criteria
 
-- Adds a typed terminal configuration section.
-- Detects WezTerm before attempting orchestration.
-- Opens a dedicated WezTerm workspace.
-- Starts panes in the configured workspace directory.
-- Opens the configured editor when enabled.
-- Starts only explicitly configured services.
-- Handles missing WezTerm with a useful error.
-- Avoids shell injection by passing command arguments safely.
-- Supports a dry-run mode that prints the launch plan.
-
-## Suggested first layout
-
-```text
-┌───────────────────────────┬─────────────────────┐
-│ Main shell                │ cargo watch         │
-├───────────────────────────┼─────────────────────┤
-│ git status / logs         │ optional service    │
-└───────────────────────────┴─────────────────────┘
-```
+- Keeps registered workspace identity separate from layout identity.
+- Uses the same-name layout only when `--layout` is omitted.
+- Generates the mux workspace name `astra:<workspace-name>` and refuses an
+  existing WezTerm workspace with that name.
+- Validates tab-local pane targets, split directions, and safe percentages.
+- Keeps configured commands as literal argument vectors without a shell.
+- Uses returned pane IDs from `spawn` and `split-pane`.
+- Uses bounded JSON polling only after the `wezterm start` fallback.
+- Opens only the configured editor and explicitly enabled Ollama service.
+- Stops on partial failure without attempting destructive rollback.
+- Supports a deterministic, fully validated dry-run with no process execution.
+- Tests do not require WezTerm or the user's real configuration.
 
 ## Validation
 
