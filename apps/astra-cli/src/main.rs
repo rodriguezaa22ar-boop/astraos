@@ -3,6 +3,7 @@ use astra_core::VERSION;
 use astra_dashboard::run_dashboard;
 use astra_projects::valid_project_name;
 use astra_system::{command_exists, command_output};
+use astra_terminal::{build_launch_plan, describe_layout, launch};
 use astra_workspaces::{
     add_workspace as add_workspace_entry, astra_root, list_workspaces as list_workspace_entries,
     remove_workspace as remove_workspace_entry, workspace_path,
@@ -59,6 +60,16 @@ enum WorkspaceCommands {
         name: String,
         #[arg(long)]
         create: bool,
+    },
+    Layout {
+        name: String,
+    },
+    Launch {
+        name: String,
+        #[arg(long)]
+        layout: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -148,7 +159,42 @@ fn workspace_command(command: WorkspaceCommands) -> Result<(), String> {
         WorkspaceCommands::Add { name, path, force } => add_workspace(&name, &path, force),
         WorkspaceCommands::Remove { name } => remove_workspace(&name),
         WorkspaceCommands::Open { name, create } => open_workspace(&name, create),
+        WorkspaceCommands::Layout { name } => show_workspace_layout(&name),
+        WorkspaceCommands::Launch {
+            name,
+            layout,
+            dry_run,
+        } => launch_workspace(&name, layout.as_deref(), dry_run),
     }
+}
+
+fn show_workspace_layout(name: &str) -> Result<(), String> {
+    let config = load().map_err(|error| error.to_string())?;
+    let rendered = describe_layout(&config, name).map_err(|error| error.to_string())?;
+    print!("{rendered}");
+    Ok(())
+}
+
+fn launch_workspace(
+    workspace_name: &str,
+    layout_name: Option<&str>,
+    dry_run: bool,
+) -> Result<(), String> {
+    let config = load().map_err(|error| error.to_string())?;
+    let plan = build_launch_plan(&config, workspace_name, layout_name)
+        .map_err(|error| error.to_string())?;
+
+    if dry_run {
+        print!("{}", plan.render_dry_run());
+        return Ok(());
+    }
+
+    let summary = launch(&plan).map_err(|error| error.to_string())?;
+    println!(
+        "✓ Launched {} with layout {} in {} ({} panes)",
+        summary.workspace, summary.layout, summary.mux_workspace, summary.pane_count
+    );
+    Ok(())
 }
 
 fn list_workspaces() -> Result<(), String> {

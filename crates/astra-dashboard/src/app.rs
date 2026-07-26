@@ -249,6 +249,8 @@ mod tests {
                 .iter()
                 .map(|(name, path)| ((*name).to_string(), (*path).to_string()))
                 .collect::<BTreeMap<_, _>>(),
+            terminal: Default::default(),
+            workspace_layouts: BTreeMap::new(),
         }
     }
 

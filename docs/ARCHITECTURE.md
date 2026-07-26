@@ -14,6 +14,8 @@
 - `astra-projects` — project-name validation and future scaffolding
 - `astra-dashboard` — terminal lifecycle, dashboard state, refresh scheduling,
   keyboard input, and rendering
+- `astra-terminal` — validated terminal launch plans, bounded WezTerm process
+  orchestration, and deterministic dry-run rendering
 
 ## Live dashboard
 
@@ -35,3 +37,16 @@ visibility are restored on normal and error exits.
 
 Applications may depend on crates. Lower-level crates should not depend on the
 CLI application.
+
+## WezTerm orchestration
+
+`astra-config` owns the declarative terminal and workspace-layout schema.
+`astra-terminal` converts a registered workspace plus a named layout into a
+validated execution plan. It owns WezTerm detection, command construction,
+process execution, returned pane-ID parsing, and bounded startup discovery.
+
+The CLI selects the workspace and layout, then either renders the plan or asks
+`astra-terminal` to execute it. It does not interpret layout internals.
+Commands remain argument vectors throughout the system; no shell evaluates
+layout commands. Existing workspace registry and `workspace open` behavior
+remain separate from terminal orchestration.
