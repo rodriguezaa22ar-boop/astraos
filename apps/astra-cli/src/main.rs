@@ -98,7 +98,8 @@ fn run() -> Result<(), String> {
     {
         Commands::Dashboard { interactive } => {
             if interactive {
-                run_dashboard().map_err(|error| error.to_string())
+                let config = load().map_err(|error| error.to_string())?;
+                run_dashboard(config).map_err(|error| error.to_string())
             } else {
                 dashboard()
             }

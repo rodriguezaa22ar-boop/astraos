@@ -1,117 +1,176 @@
-use astra_config::load;
-use astra_system::command_exists;
-use astra_workspaces::astra_root;
+mod app;
+mod ui;
 
+use app::{DashboardState, InputAction, RENDER_TICK};
+use astra_config::{config_path, Config};
+use astra_system::SystemCollector;
 use crossterm::{
-    event::{self, Event, KeyCode},
+    cursor::{Hide, Show},
+    event::{self, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
-    style::{Modifier, Style},
-    text::Line,
-    widgets::{Block, Borders, List, ListItem, Paragraph},
-    Terminal,
-};
+use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{
+    fs,
     io::{self, stdout},
-    time::Duration,
+    time::Instant,
 };
+use thiserror::Error;
 
-pub fn run_dashboard() -> io::Result<()> {
-    enable_raw_mode()?;
-
-    let mut output = stdout();
-    execute!(output, EnterAlternateScreen)?;
-
-    let backend = CrosstermBackend::new(output);
-    let mut terminal = Terminal::new(backend)?;
-
-    let result = run_loop(&mut terminal);
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-
-    result
+#[derive(Debug, Error)]
+pub enum DashboardError {
+    #[error("terminal operation failed: {0}")]
+    Terminal(#[from] io::Error),
 }
 
-fn run_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
-    let config = load().unwrap_or_default();
-    let root = astra_root(&config);
+pub fn run_dashboard(config: Config) -> Result<(), DashboardError> {
+    let mut session = TerminalSession::enter()?;
+
+    let loop_result = {
+        let backend = CrosstermBackend::new(stdout());
+        let mut terminal = Terminal::new(backend)?;
+        run_loop(&mut terminal, config)
+    };
+
+    let cleanup_result = session.restore().map_err(DashboardError::from);
+
+    match loop_result {
+        Err(error) => Err(error),
+        Ok(()) => cleanup_result,
+    }
+}
+
+fn run_loop<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    config: Config,
+) -> Result<(), DashboardError> {
+    let mut state = DashboardState::new(&config);
+    let mut collector = SystemCollector::new();
+    let mut next_render = Instant::now();
+
+    terminal.draw(|frame| ui::render(frame, &state))?;
 
     loop {
-        terminal.draw(|frame| {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Min(8),
-                    Constraint::Length(3),
-                ])
-                .split(frame.area());
+        let now = Instant::now();
 
-            let title = Paragraph::new("ASTRA COMMAND CENTER")
-                .style(Style::default().add_modifier(Modifier::BOLD))
-                .block(Block::default().borders(Borders::ALL));
+        if state.should_refresh(now) {
+            refresh_workspaces(&mut state);
 
-            frame.render_widget(title, chunks[0]);
+            let filesystem_path = state.selected_filesystem_path().to_path_buf();
+            let snapshot = if state.force_service_refresh() {
+                collector.refresh_now(&filesystem_path)
+            } else {
+                collector.refresh(&filesystem_path)
+            };
+            state.complete_refresh(snapshot, now);
+        }
 
-            let body = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(chunks[1]);
+        let after_refresh = Instant::now();
+        if after_refresh >= next_render {
+            terminal.draw(|frame| ui::render(frame, &state))?;
+            next_render = after_refresh + RENDER_TICK;
+        }
 
-            let tools = [
-                "brew", "git", "gh", "node", "python3", "docker", "codex", "ollama",
-            ]
-            .into_iter()
-            .map(|tool| {
-                let marker = if command_exists(tool) { "✓" } else { "!" };
+        let poll_timeout = next_render.saturating_duration_since(Instant::now());
 
-                ListItem::new(Line::from(format!("{marker} {tool}")))
-            })
-            .collect::<Vec<_>>();
-
-            let systems =
-                List::new(tools).block(Block::default().title("System").borders(Borders::ALL));
-
-            frame.render_widget(systems, body[0]);
-
-            let projects = [
-                ("Astraeus Omnia", root.join("astraeus-omnia")),
-                ("Omnia API Foundry", root.join("omnia-api-foundry")),
-                ("Games", root.join("games")),
-                ("Cybersecurity", root.join("cybersecurity")),
-                ("AI Lab", root.join("ai")),
-            ]
-            .into_iter()
-            .map(|(name, path)| {
-                let marker = if path.exists() { "✓" } else { "!" };
-
-                ListItem::new(Line::from(format!("{marker} {name}")))
-            })
-            .collect::<Vec<_>>();
-
-            let project_list =
-                List::new(projects).block(Block::default().title("Projects").borders(Borders::ALL));
-
-            frame.render_widget(project_list, body[1]);
-
-            let footer = Paragraph::new("Press q or Esc to exit")
-                .block(Block::default().borders(Borders::ALL));
-
-            frame.render_widget(footer, chunks[2]);
-        })?;
-
-        if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()? {
-                if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                    return Ok(());
+        if event::poll(poll_timeout)? {
+            match event::read()? {
+                Event::Key(key)
+                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                {
+                    if state.handle_key(key.code) == InputAction::Quit {
+                        return Ok(());
+                    }
                 }
+                Event::Resize(_, _) => next_render = Instant::now(),
+                _ => {}
             }
         }
+    }
+}
+
+fn refresh_workspaces(state: &mut DashboardState) {
+    match load_config_read_only() {
+        Ok(config) => {
+            state.update_workspaces(&config);
+            state.clear_status_message();
+        }
+        Err(message) => state.set_status_message(message),
+    }
+}
+
+fn load_config_read_only() -> Result<Config, String> {
+    let path = config_path();
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("Config refresh unavailable: {error}"))?;
+
+    toml::from_str(&contents).map_err(|error| format!("Config refresh unavailable: {error}"))
+}
+
+struct TerminalSession {
+    raw_mode_enabled: bool,
+    alternate_screen_entered: bool,
+    cursor_hidden: bool,
+}
+
+impl TerminalSession {
+    fn enter() -> io::Result<Self> {
+        enable_raw_mode()?;
+
+        let mut session = Self {
+            raw_mode_enabled: true,
+            alternate_screen_entered: false,
+            cursor_hidden: false,
+        };
+        let mut output = stdout();
+
+        execute!(output, EnterAlternateScreen)?;
+        session.alternate_screen_entered = true;
+
+        execute!(output, Hide)?;
+        session.cursor_hidden = true;
+
+        Ok(session)
+    }
+
+    fn restore(&mut self) -> io::Result<()> {
+        let mut first_error = None;
+
+        if self.raw_mode_enabled {
+            match disable_raw_mode() {
+                Ok(()) => self.raw_mode_enabled = false,
+                Err(error) => first_error = Some(error),
+            }
+        }
+
+        let mut output = stdout();
+
+        if self.cursor_hidden {
+            match execute!(output, Show) {
+                Ok(()) => self.cursor_hidden = false,
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
+        }
+
+        if self.alternate_screen_entered {
+            match execute!(output, LeaveAlternateScreen) {
+                Ok(()) => self.alternate_screen_entered = false,
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
+        }
+
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for TerminalSession {
+    fn drop(&mut self) {
+        let _ = self.restore();
     }
 }
