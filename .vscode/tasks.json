@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build",
+      "type": "shell",
+      "command": "cargo build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Test",
+      "type": "shell",
+      "command": "cargo test --workspace"
+    },
+    {
+      "label": "Clippy",
+      "type": "shell",
+      "command": "cargo clippy --workspace -- -D warnings"
+    },
+    {
+      "label": "Release",
+      "type": "shell",
+      "command": "cargo build --release"
+    },
+    {
+      "label": "Run Astra",
+      "type": "shell",
+      "command": "cargo run -- dashboard"
+    }
+  ]
+}

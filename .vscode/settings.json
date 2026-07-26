@@ -1,14 +1,23 @@
 {
+  "editor.formatOnSave": true,
+  "editor.minimap.enabled": false,
+  "editor.rulers": [100],
+  "editor.renderWhitespace": "boundary",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.cargo.allFeatures": true,
+
   "files.exclude": {
     "**/target": true
   },
+
   "files.watcherExclude": {
     "**/target/**": true
   },
+
   "search.exclude": {
     "**/target/**": true
-  },
-  "rust-analyzer.check.command": "clippy",
-  "rust-analyzer.cargo.allFeatures": true,
-  "editor.formatOnSave": true
+  }
 }
