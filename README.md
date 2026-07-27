@@ -42,6 +42,7 @@ cargo build --release
 8. Project Context Engine
 9. Read-only Project Action Engine
 10. Action Policy and Dry-Run Planning
+11. State-Bound Controlled Check Execution
 
 The original roadmap also included the following pre-context milestones:
 
@@ -55,4 +56,6 @@ The original roadmap also included the following pre-context milestones:
 8. Cross-platform support
 
 Milestone 10 evaluates and previews only the currently discovered Cargo
-validation actions. It does not execute commands.
+validation actions. Milestone 11 adds tightly controlled execution of the
+discovered `check` action: it requires a Git-backed, state-bound plan and
+refuses stale plans. Build and test remain dry-run only.

@@ -34,9 +34,13 @@
 
 - Strict action policy and deterministic dry-run planning
 
+## v0.11
+
+- State-bound controlled execution of the approved Cargo workspace check
+- Bounded Git source-state capture and post-execution verification
+
 ## Future
 
-- Process execution under the explicit action policy
 - AI orchestration consuming structured project context
 - Cybersecurity workflows
 - Stable installer and release channel

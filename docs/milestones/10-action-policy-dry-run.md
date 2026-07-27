@@ -1,5 +1,8 @@
 # Milestone 10: Action Policy and Dry-Run Planning
 
+This document records the Milestone 10 boundary. Milestone 11 preserves its
+dry-run behavior and adds a separate, state-bound execution path for `check`.
+
 ## Objective
 
 Introduce the first decision layer between discovered project actions and

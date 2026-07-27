@@ -3,6 +3,9 @@ mod plan;
 mod policy;
 mod resolver;
 
+/// Version of the executable action policy contract.
+pub const ACTION_POLICY_VERSION: u32 = 1;
+
 pub use model::{
     ActionId, ActionSource, CommandSpec, ProjectAction, ProjectActionReport, ProjectReference,
     PROJECT_ACTION_SCHEMA_VERSION,
