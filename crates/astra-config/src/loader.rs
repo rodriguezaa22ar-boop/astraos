@@ -14,12 +14,29 @@ pub fn load() -> Result<Config, ConfigError> {
         return Ok(config);
     }
 
-    let contents = fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-        path: path.clone(),
+    read_config(&path)
+}
+
+/// Loads the configuration without creating a default file when it is absent.
+pub fn load_if_present() -> Result<Option<Config>, ConfigError> {
+    let path = config_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    read_config(&path).map(Some)
+}
+
+fn read_config(path: &std::path::Path) -> Result<Config, ConfigError> {
+    let contents = fs::read_to_string(path).map_err(|source| ConfigError::Read {
+        path: path.to_path_buf(),
         source,
     })?;
 
-    toml::from_str(&contents).map_err(|source| ConfigError::Parse { path, source })
+    toml::from_str(&contents).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 pub fn save(config: &Config) -> Result<(), ConfigError> {

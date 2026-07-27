@@ -1,0 +1,8 @@
+[package]
+name = "fixture-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fixture-core = { path = "../library" }

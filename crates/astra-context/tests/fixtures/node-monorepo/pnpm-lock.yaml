@@ -1,0 +1,26 @@
+lockfileVersion: "9.0"
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+  .: {}
+
+  apps/web:
+    dependencies:
+      "@fixture/core":
+        specifier: workspace:*
+        version: link:../../packages/core
+    devDependencies:
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.0
+
+  packages/core: {}
+
+packages:
+  vitest@2.1.0: {}
+
+snapshots:
+  vitest@2.1.0: {}

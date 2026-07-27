@@ -9,6 +9,8 @@ members = [
     "crates/astra-workspaces",
     "crates/astra-projects",
     "crates/astra-dashboard",
+    "crates/astra-context",
+    "crates/astra-actions",
 ]
 
 default-members = [
@@ -34,6 +36,8 @@ astra-config = { path = "crates/astra-config" }
 astra-system = { path = "crates/astra-system" }
 astra-workspaces = { path = "crates/astra-workspaces" }
 astra-projects = { path = "crates/astra-projects" }
+astra-context = { path = "crates/astra-context" }
+astra-actions = { path = "crates/astra-actions" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -42,6 +46,7 @@ toml = "0.9"
 
 # Filesystem
 dirs = "6"
+ignore = "0.4"
 
 # Error handling
 thiserror = "2"
