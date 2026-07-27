@@ -1,3 +1,5 @@
+mod context;
+
 use astra_config::{config_path, load, save, Config};
 use astra_core::VERSION;
 use astra_dashboard::run_dashboard;
@@ -7,10 +9,10 @@ use astra_workspaces::{
     add_workspace as add_workspace_entry, astra_root, list_workspaces as list_workspace_entries,
     remove_workspace as remove_workspace_entry, workspace_path,
 };
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::{
     env, fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
 };
 use tracing::{error, info};
@@ -40,6 +42,25 @@ enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+    Context(ContextArgs),
+}
+
+#[derive(Debug, Args)]
+struct ContextArgs {
+    #[command(subcommand)]
+    command: Option<ContextCommands>,
+    #[arg(value_name = "PATH", default_value = ".")]
+    path: PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum ContextCommands {
+    Tree {
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -108,6 +129,17 @@ fn run() -> Result<(), String> {
         Commands::Workspace { command } => workspace_command(command),
         Commands::Project { kind, name } => create_project(&kind, &name),
         Commands::Config { command } => config_command(command),
+        Commands::Context(arguments) => context_command(arguments),
+    }
+}
+
+fn context_command(arguments: ContextArgs) -> Result<(), String> {
+    match arguments.command {
+        Some(ContextCommands::Tree { path }) => {
+            context::inspect(&path, context::OutputFormat::Tree)
+        }
+        None if arguments.json => context::inspect(&arguments.path, context::OutputFormat::Json),
+        None => context::inspect(&arguments.path, context::OutputFormat::Text),
     }
 }
 

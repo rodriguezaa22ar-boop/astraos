@@ -26,7 +26,7 @@ Milestones:
   5  Workspace commands
   6  Live interactive dashboard
   7  WezTerm workspace orchestration
-  8  AI project-context engine
+  8  Project Context Engine
 
 Typical workflow:
   ./astraos-milestones.sh start 5
@@ -63,7 +63,7 @@ milestone_name() {
     5) echo "workspace-commands" ;;
     6) echo "live-dashboard" ;;
     7) echo "wezterm-orchestration" ;;
-    8) echo "ai-context-engine" ;;
+    8) echo "project-context-engine" ;;
     *) die "Unknown milestone: $1" ;;
   esac
 }
@@ -73,7 +73,7 @@ milestone_title() {
     5) echo "Workspace Commands" ;;
     6) echo "Live Interactive Dashboard" ;;
     7) echo "WezTerm Workspace Orchestration" ;;
-    8) echo "AI Project-Context Engine" ;;
+    8) echo "Project Context Engine" ;;
     *) die "Unknown milestone: $1" ;;
   esac
 }
@@ -272,63 +272,83 @@ EOF
 }
 
 write_milestone_8() {
-  cat > docs/milestones/08-ai-context-engine.md <<'EOF'
-# Milestone 8: AI Project-Context Engine
+  cat > docs/milestones/08-project-context-engine.md <<'EOF'
+# Milestone 8: Project Context Engine
 
 ## User capability
 
-AstraOS can assemble reliable local project context for AI tools.
+AstraOS can inspect any local project and produce deterministic, structured
+knowledge without calling an AI provider.
 
 ## Required commands
 
 ```text
-astra ai context
-astra ai context --json
-astra ai context --workspace <name>
-astra ai doctor
+astra context [PATH]
+astra context [PATH] --json
+astra context tree [PATH]
 ```
 
-## Context fields
+## Architecture
 
-- AstraOS version
-- Current workspace name and path
-- Git repository root
-- Git branch
-- Clean or dirty working-tree state
-- Recent commit summaries
-- Cargo workspace packages
-- Relevant project files
-- Installed AI tools
-- Ollama service state
-- Installed local models
-- Configuration path
+```text
+Selected Project Root
+        ↓
+Inventory Phase
+        ↓
+ManifestCatalog
+        ↓
+FactGraphBuilder
+        ↓
+Immutable FactGraph
+        ↓
+Projection Scanners
+        ↓
+ProjectContext
+        ↓
+InsightsEngine
+        ↓
+ScanReport
+        ↓
+Text / JSON / Tree Renderers
+```
+
+The `FactGraph` is private, immutable after construction, and never serialized
+or exposed as a public API. Projection scanners consume only that graph and do
+not read files, execute Git, parse manifests, or mutate facts.
 
 ## Acceptance criteria
 
-- Read-only by default.
-- Never includes `.env`, secrets, credentials, SSH keys, or ignored files.
-- Honors `.gitignore`.
-- Supports text and JSON output.
-- Has deterministic output for automation.
-- Sets clear size limits.
-- Marks unavailable information instead of failing the entire command.
-- Includes tests for secret-path exclusion and output serialization.
-
-## Future integration boundary
-
-This milestone builds context only. Provider-specific execution should remain a
-separate layer so AstraOS can support Codex, Ollama, and other providers without
-coupling the core context engine to one service.
+- Adds the provider-neutral `astra-context` crate and `ProjectAnalyzer`.
+- Returns a schema-versioned `ScanReport` containing `ProjectContext`, scanner
+  results, diagnostics, and factual insights.
+- Carries confidence and evidence with semantic discoveries.
+- Uses independent fact-producing and projection scanners.
+- Is read-only, bounded, deterministic, ignore-aware, and recoverable.
+- Retains bounded fixture files as facts while excluding fixture and example
+  facts from production project summaries.
+- Prefers authoritative workspace validation commands over equivalent
+  repetitive package commands while preserving distinct package commands.
+- Never calls an LLM, executes discovered validation commands, or modifies a
+  project.
+- Adds no persistent AstraOS configuration, cache, graph database, or plugin
+  interface.
+- Excludes internal graph IDs and runtime duration from serialization.
+- Includes isolated tests that require no network, GitHub, LLM, editor,
+  WezTerm, user configuration, or developer-machine state.
 
 ## Validation
 
 ```bash
+cargo test -p astra-context
+cargo test -p astra
 cargo fmt --all --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release
-astra ai context
-astra ai context --json
+./scripts/astraos-milestones.sh validate
+./target/release/astra context .
+./target/release/astra context . --json
+./target/release/astra context tree .
 ```
 EOF
 }
@@ -355,7 +375,7 @@ start_milestone() {
     5) write_milestone_5; spec="docs/milestones/05-workspace-commands.md" ;;
     6) write_milestone_6; spec="docs/milestones/06-live-dashboard.md" ;;
     7) write_milestone_7; spec="docs/milestones/07-wezterm-orchestration.md" ;;
-    8) write_milestone_8; spec="docs/milestones/08-ai-context-engine.md" ;;
+    8) write_milestone_8; spec="docs/milestones/08-project-context-engine.md" ;;
   esac
 
   git add "$spec"
@@ -425,9 +445,9 @@ finish_milestone() {
       title="Add WezTerm workspace orchestration"
       body="Implements Milestone 7: reproducible WezTerm development layouts and launch plans."
       ;;
-    feat/ai-context-engine)
-      title="Add AI project-context engine"
-      body="Implements Milestone 8: safe project context generation for AI tools."
+    feat/project-context-engine)
+      title="Add Project Context Engine"
+      body="Implements Milestone 8: deterministic, provider-neutral project context generation."
       ;;
     *)
       title="Complete ${branch#feat/}"
@@ -474,8 +494,8 @@ list_milestones() {
 7  WezTerm Workspace Orchestration
    Reproducible panes, services, editor launch, and dry-run plans.
 
-8  AI Project-Context Engine
-   Safe text/JSON context generation without secrets.
+8  Project Context Engine
+   Deterministic text, JSON, and semantic-tree project knowledge.
 EOF
 }
 

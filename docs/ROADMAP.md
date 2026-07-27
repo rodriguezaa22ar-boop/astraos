@@ -23,6 +23,8 @@
 ## v0.7+
 
 - Plugin system
-- AI orchestration
+- Provider-neutral Project Context Engine with deterministic text, JSON, and
+  semantic-tree output
+- Future AI orchestration consuming structured project context
 - Cybersecurity workflows
 - Stable installer and release channel
