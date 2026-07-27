@@ -10,3 +10,5 @@ Use this file for small engineering decisions that do not require a full ADR.
 - Ratatui selected for the interactive terminal dashboard.
 - Project actions remain structured argv values and read-only until a later
   milestone defines execution policy.
+- The first action policy is an explicit Cargo workspace allowlist and is
+  evaluated through deterministic dry-run plans before execution is designed.

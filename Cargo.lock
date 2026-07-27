@@ -120,6 +120,7 @@ dependencies = [
  "astra-context",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

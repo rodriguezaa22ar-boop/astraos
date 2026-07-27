@@ -30,9 +30,13 @@
 - Read-only Project Action Engine foundation with typed Cargo build/check/test
   discovery
 
+## v0.10
+
+- Strict action policy and deterministic dry-run planning
+
 ## Future
 
-- Explicit action policy and process execution
+- Process execution under the explicit action policy
 - AI orchestration consuming structured project context
 - Cybersecurity workflows
 - Stable installer and release channel

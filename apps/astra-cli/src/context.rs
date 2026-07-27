@@ -1,4 +1,6 @@
-use astra_context::{render_json, render_text, render_tree, ProjectAnalyzer, ScanReport};
+use astra_context::{
+    render_json, render_text, render_tree, ProjectAnalyzer, ScanOptions, ScanReport,
+};
 use std::{
     io::{self, Write},
     path::Path,
@@ -18,6 +20,13 @@ pub(crate) fn inspect(path: &Path, format: OutputFormat) -> Result<(), String> {
 
 pub(crate) fn analyze(path: &Path) -> Result<ScanReport, String> {
     ProjectAnalyzer::default()
+        .analyze(path)
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn analyze_without_processes(path: &Path) -> Result<ScanReport, String> {
+    ProjectAnalyzer::without_processes(ScanOptions::default())
+        .map_err(|error| error.to_string())?
         .analyze(path)
         .map_err(|error| error.to_string())
 }
