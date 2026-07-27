@@ -4,6 +4,9 @@ use astra_actions::{
     PolicyDecision, PolicyRejectionReason, ProjectAction, ProjectActionReport, ProjectReference,
 };
 use astra_config::{load_if_present, Config};
+use astra_execution::{
+    ExecutionEngine, ExecutionError, ExecutionOutputMode, ExecutionResult, VerificationVerdict,
+};
 use astra_workspaces::{list_workspaces, workspace_path};
 use std::{fmt, fs, path::PathBuf};
 
@@ -17,10 +20,15 @@ pub(crate) enum ProjectError {
     Context(String),
     Serialization(String),
     Output(String),
-    DryRunRequired,
+    DryRunOnly(ActionId),
     InvalidAction(String),
     ActionUnavailable { project: String, action: ActionId },
     PolicyRejected(PolicyRejectionReason),
+    Execution(ExecutionError),
+    ChildFailed { exit_code: i32 },
+    SourceStateChanged,
+    CommandFailedAndSourceStateChanged { exit_code: Option<i32> },
+    Interrupted,
 }
 
 impl fmt::Display for ProjectError {
@@ -46,8 +54,8 @@ impl fmt::Display for ProjectError {
                 write!(formatter, "could not serialize project actions: {message}")
             }
             Self::Output(message) => formatter.write_str(message),
-            Self::DryRunRequired => {
-                formatter.write_str("real action execution is not available; use --dry-run")
+            Self::DryRunOnly(action) => {
+                write!(formatter, "action is currently dry-run only: {action}")
             }
             Self::InvalidAction(action) => write!(formatter, "unsupported action: {action}"),
             Self::ActionUnavailable { project, action } => {
@@ -59,6 +67,37 @@ impl fmt::Display for ProjectError {
             Self::PolicyRejected(reason) => {
                 write!(formatter, "action rejected by policy: {reason}")
             }
+            Self::Execution(error) => formatter.write_str(&error.to_string()),
+            Self::ChildFailed { exit_code } => {
+                write!(formatter, "cargo check failed with exit code {exit_code}")
+            }
+            Self::SourceStateChanged => {
+                formatter.write_str("source state changed during execution; check is not verified")
+            }
+            Self::CommandFailedAndSourceStateChanged { exit_code } => write!(
+                formatter,
+                "cargo check failed{} and source state changed during execution",
+                exit_code.map_or_else(String::new, |code| format!(" with exit code {code}"))
+            ),
+            Self::Interrupted => formatter.write_str("cargo check was interrupted"),
+        }
+    }
+}
+
+impl ProjectError {
+    pub(crate) fn exit_code(&self) -> u8 {
+        match self {
+            Self::ChildFailed { exit_code } => u8::try_from(*exit_code)
+                .ok()
+                .filter(|code| *code != 0)
+                .unwrap_or(1),
+            Self::CommandFailedAndSourceStateChanged {
+                exit_code: Some(exit_code),
+            } => u8::try_from(*exit_code)
+                .ok()
+                .filter(|code| *code != 0)
+                .unwrap_or(1),
+            _ => 1,
         }
     }
 }
@@ -76,12 +115,19 @@ pub(crate) fn run(command: ProjectCommands) -> Result<(), ProjectError> {
 }
 
 fn run_action(arguments: ProjectRunArgs) -> Result<(), ProjectError> {
-    if !arguments.dry_run {
-        return Err(ProjectError::DryRunRequired);
-    }
-
     let action_id = ActionId::parse(&arguments.action)
         .ok_or_else(|| ProjectError::InvalidAction(arguments.action.clone()))?;
+    if !arguments.dry_run {
+        return if action_id == ActionId::Check {
+            run_check(arguments)
+        } else {
+            Err(ProjectError::DryRunOnly(action_id))
+        };
+    }
+    run_dry_run(arguments, action_id)
+}
+
+fn run_dry_run(arguments: ProjectRunArgs, action_id: ActionId) -> Result<(), ProjectError> {
     let config = load_project_config()?;
     let root = resolve_registered_project(&config, &arguments.name)?;
     let report = context::analyze_without_processes(&root).map_err(ProjectError::Context)?;
@@ -112,6 +158,65 @@ fn run_action(arguments: ProjectRunArgs) -> Result<(), ProjectError> {
     }
 
     Ok(())
+}
+
+fn run_check(arguments: ProjectRunArgs) -> Result<(), ProjectError> {
+    let config = load_project_config()?;
+    let root = resolve_registered_project(&config, &arguments.name)?;
+    let report = context::analyze_without_processes(&root).map_err(ProjectError::Context)?;
+    let actions = absolutize_actions(resolve_actions(&report.context.validation_commands), &root);
+    let action = select_action(&actions, ActionId::Check).ok_or_else(|| {
+        ProjectError::ActionUnavailable {
+            project: arguments.name.clone(),
+            action: ActionId::Check,
+        }
+    })?;
+    let project = ProjectReference {
+        name: arguments.name,
+        root,
+    };
+    let engine = ExecutionEngine::new();
+    let plan = engine
+        .plan(&project, &action)
+        .map_err(ProjectError::Execution)?;
+
+    if !arguments.json {
+        print_execution_plan(&plan);
+        println!("\nExecuting approved plan...\n");
+    }
+
+    let result = engine
+        .execute(
+            &plan,
+            if arguments.json {
+                ExecutionOutputMode::Json
+            } else {
+                ExecutionOutputMode::Human
+            },
+        )
+        .map_err(ProjectError::Execution)?;
+
+    if arguments.json {
+        let rendered = serde_json::to_string_pretty(&result)
+            .map_err(|error| ProjectError::Serialization(error.to_string()))?;
+        println!("{rendered}");
+    } else {
+        print_execution_result(&result);
+    }
+
+    match result.execution.verdict {
+        VerificationVerdict::VerifiedCheck => Ok(()),
+        VerificationVerdict::CommandFailed => Err(ProjectError::ChildFailed {
+            exit_code: result.execution.exit_code.unwrap_or(1),
+        }),
+        VerificationVerdict::SourceStateChanged => Err(ProjectError::SourceStateChanged),
+        VerificationVerdict::CommandFailedAndSourceStateChanged => {
+            Err(ProjectError::CommandFailedAndSourceStateChanged {
+                exit_code: result.execution.exit_code,
+            })
+        }
+        VerificationVerdict::Interrupted => Err(ProjectError::Interrupted),
+    }
 }
 
 fn load_project_config() -> Result<Config, ProjectError> {
@@ -260,6 +365,64 @@ fn print_dry_run(report: &DryRunReport) {
     } else {
         println!("Dry run rejected. No process was started.");
     }
+}
+
+fn print_execution_plan(plan: &astra_execution::AuthorizedExecutionPlan) {
+    let action = &plan.action;
+    println!("Project: {}", plan.project.name);
+    println!("Action: {}", action.id.as_str());
+    println!(
+        "Working directory: {}",
+        action.command.working_directory.display()
+    );
+    println!("Executable: {}", shell_quote(&action.command.executable));
+    println!("Arguments:");
+    for argument in &action.command.arguments {
+        println!("  - {}", shell_quote(argument));
+    }
+    println!("Policy: allowed");
+    println!(
+        "State fingerprint: {}",
+        plan.source_state.combined_fingerprint
+    );
+    println!("Action fingerprint: {}", plan.action_fingerprint);
+    println!("Plan fingerprint: {}", plan.plan_fingerprint);
+}
+
+fn print_execution_result(result: &ExecutionResult) {
+    println!("Check result");
+    println!(
+        "  Process started: {}",
+        if result.execution.process_started {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    println!(
+        "  Exit code: {}",
+        result
+            .execution
+            .exit_code
+            .map_or_else(|| "none".to_string(), |code| code.to_string())
+    );
+    println!("  Duration: {} ms", result.execution.duration_ms);
+    println!(
+        "  Source state changed: {}",
+        if result.state.changed { "yes" } else { "no" }
+    );
+    println!(
+        "  Verdict: {}",
+        match result.execution.verdict {
+            VerificationVerdict::VerifiedCheck => "verified_check",
+            VerificationVerdict::CommandFailed => "command_failed",
+            VerificationVerdict::SourceStateChanged => "source_state_changed",
+            VerificationVerdict::CommandFailedAndSourceStateChanged => {
+                "command_failed_and_source_state_changed"
+            }
+            VerificationVerdict::Interrupted => "interrupted",
+        }
+    );
 }
 
 fn display_command(executable: &str, arguments: &[String]) -> String {

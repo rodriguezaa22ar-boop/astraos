@@ -15,6 +15,7 @@ astra-workspaces.workspace = true
 astra-projects.workspace = true
 astra-context.workspace = true
 astra-actions.workspace = true
+astra-execution.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

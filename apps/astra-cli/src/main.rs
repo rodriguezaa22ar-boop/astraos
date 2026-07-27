@@ -149,14 +149,30 @@ fn main() -> ExitCode {
 
     match run() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            eprintln!("astra: {message}");
-            ExitCode::FAILURE
+        Err(error) => {
+            eprintln!("astra: {}", error.message);
+            ExitCode::from(error.code)
         }
     }
 }
 
-fn run() -> Result<(), String> {
+#[derive(Debug)]
+struct CliError {
+    message: String,
+    code: u8,
+}
+
+impl From<String> for CliError {
+    fn from(message: String) -> Self {
+        Self { message, code: 1 }
+    }
+}
+
+fn adapt(result: Result<(), String>) -> Result<(), CliError> {
+    result.map_err(CliError::from)
+}
+
+fn run() -> Result<(), CliError> {
     let cli = Cli::parse();
 
     match cli
@@ -166,16 +182,19 @@ fn run() -> Result<(), String> {
         Commands::Dashboard { interactive } => {
             if interactive {
                 let config = load().map_err(|error| error.to_string())?;
-                run_dashboard(config).map_err(|error| error.to_string())
+                run_dashboard(config).map_err(|error| CliError::from(error.to_string()))
             } else {
-                dashboard()
+                adapt(dashboard())
             }
         }
-        Commands::Doctor => doctor(),
-        Commands::Workspace { command } => workspace_command(command),
-        Commands::Project { command } => project::run(command).map_err(|error| error.to_string()),
-        Commands::Config { command } => config_command(command),
-        Commands::Context(arguments) => context_command(arguments),
+        Commands::Doctor => adapt(doctor()),
+        Commands::Workspace { command } => adapt(workspace_command(command)),
+        Commands::Project { command } => project::run(command).map_err(|error| CliError {
+            message: error.to_string(),
+            code: error.exit_code(),
+        }),
+        Commands::Config { command } => adapt(config_command(command)),
+        Commands::Context(arguments) => adapt(context_command(arguments)),
     }
 }
 

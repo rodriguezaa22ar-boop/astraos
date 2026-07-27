@@ -87,13 +87,26 @@ confidence remain structured. No shell strings are stored or interpreted, and
 the resolver and policy never spawn a process. The policy permits only the
 current context-engine shape `cargo <build|check|test> --workspace` and
 requires the canonical working directory to remain inside the project root.
-`astra project run` produces a dry-run plan with `process_started: false`;
-its context pass uses the existing engine with its repository-process boundary
-disabled. Ordinary `astra context` inspection retains its bounded Git
-inspection. Real execution, history, and remote actions belong to later
-milestones.
+
+`astra-execution` is the separate state-bound execution boundary. It owns
+fingerprints, bounded Git state capture, authorized plans, direct process
+launching, and execution-result models. A plan binds the repository-wide HEAD
+plus staged, unstaged, and relevant non-ignored untracked state in the selected
+canonical project subtree. Before launch, the exact plan, action, policy
+version, project root, and source binding are revalidated; stale plans are
+refused. After launch, the same state is captured again and the result
+distinguishes a verified check from command failure or source-state change.
+
+`astra project run <NAME> check` is the only real execution path. It invokes
+the approved Cargo argv directly, never through a shell. `build` and `test`
+remain dry-run only. JSON execution results are versioned and keep child
+diagnostics on stderr so stdout remains machine-readable. Execution history,
+policy configuration, retries, parallelism, and remote actions remain future
+work.
 
 ## Dependency direction
 
 Applications may depend on crates. Lower-level crates should not depend on the
-CLI application.
+CLI application. The dependency flow for controlled checks is
+`astra-context` → `astra-actions` → `astra-execution` → `astra-cli`; neither
+execution crate depends on the CLI, and `astra-actions` remains process-free.

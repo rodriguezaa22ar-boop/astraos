@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted for Milestone 10; execution details superseded by ADR 0008
 
 ## Context
 
