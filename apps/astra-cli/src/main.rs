@@ -73,6 +73,8 @@ enum ProjectCommands {
     Inspect(ProjectInspectArgs),
     /// Discover supported, read-only actions for a registered project.
     Commands(ProjectCommandsArgs),
+    /// Evaluate a discovered action through the dry-run policy.
+    Run(ProjectRunArgs),
     /// Create a project scaffold (legacy behavior under an explicit command).
     Create { kind: String, name: String },
 }
@@ -89,6 +91,22 @@ struct ProjectInspectArgs {
 struct ProjectCommandsArgs {
     #[arg(value_name = "NAME")]
     name: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProjectRunArgs {
+    /// Registered project name.
+    #[arg(value_name = "NAME")]
+    name: String,
+    /// Discovered action: build, check, or test.
+    #[arg(value_name = "ACTION")]
+    action: String,
+    /// Evaluate policy and print the execution plan without starting a process.
+    #[arg(long)]
+    dry_run: bool,
+    /// Print deterministic JSON.
     #[arg(long)]
     json: bool,
 }

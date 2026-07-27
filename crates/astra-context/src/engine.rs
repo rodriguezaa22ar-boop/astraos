@@ -2,7 +2,7 @@ use crate::{
     facts::FactGraphBuilder,
     insights::InsightsEngine,
     inventory, manifests,
-    process::{ProcessRunner, SystemProcessRunner},
+    process::{CommandInvocation, ProcessOutput, ProcessRunner, SystemProcessRunner},
     projection,
     scanner::{ScannerInput, ScannerOutput},
     scanners, ContextError, ProjectContext, ScanOptions, ScanReport, ToolingSummary,
@@ -19,12 +19,41 @@ pub struct ProjectAnalyzer {
     runner: Box<dyn ProcessRunner>,
 }
 
+#[derive(Debug, Default)]
+struct NoProcessRunner;
+
+impl ProcessRunner for NoProcessRunner {
+    fn run(
+        &self,
+        _invocation: &CommandInvocation,
+        _timeout: std::time::Duration,
+        _output_limit: usize,
+    ) -> io::Result<ProcessOutput> {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "process execution disabled",
+        ))
+    }
+}
+
 impl ProjectAnalyzer {
     pub fn new(options: ScanOptions) -> Result<Self, ContextError> {
         options.validate()?;
         Ok(Self {
             options,
             runner: Box::<SystemProcessRunner>::default(),
+        })
+    }
+
+    /// Creates an analyzer whose repository-process boundary is disabled.
+    ///
+    /// Filesystem and manifest discovery remain enabled, while Git inspection
+    /// degrades to the existing unavailable state without starting a process.
+    pub fn without_processes(options: ScanOptions) -> Result<Self, ContextError> {
+        options.validate()?;
+        Ok(Self {
+            options,
+            runner: Box::<NoProcessRunner>::default(),
         })
     }
 
@@ -294,6 +323,22 @@ mod tests {
             .expect("analyzer");
         let report = analyzer.analyze(directory.path()).expect("report");
         assert_eq!(report.schema_version, PROJECT_CONTEXT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn no_process_analyzer_marks_git_unavailable_without_running_it() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        fs::create_dir(directory.path().join(".git")).expect("git marker");
+        let analyzer =
+            ProjectAnalyzer::without_processes(ScanOptions::default()).expect("analyzer");
+        let report = analyzer.analyze(directory.path()).expect("report");
+        let git = report
+            .scanners
+            .iter()
+            .find(|scanner| scanner.metadata.id == "git")
+            .expect("git scanner result");
+
+        assert_eq!(git.status, crate::ScannerStatus::Unavailable);
     }
 
     #[test]

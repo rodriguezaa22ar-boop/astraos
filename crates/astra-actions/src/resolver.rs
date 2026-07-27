@@ -34,6 +34,13 @@ pub fn resolve_actions(commands: &[Detected<ContextCommandSpec>]) -> Vec<Project
     selected.into_values().collect()
 }
 
+pub fn select_action(actions: &[ProjectAction], requested: ActionId) -> Option<ProjectAction> {
+    actions
+        .iter()
+        .find(|action| action.id == requested)
+        .cloned()
+}
+
 fn action_id(command: &ContextCommandSpec) -> Option<ActionId> {
     if command.executable != "cargo" {
         return None;

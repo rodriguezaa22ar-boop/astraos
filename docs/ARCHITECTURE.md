@@ -16,8 +16,8 @@
   keyboard input, and rendering
 - `astra-context` — provider-neutral project analysis, immutable project
   facts, structured context, derived insights, and deterministic renderers
-- `astra-actions` — typed, read-only action discovery from context validation
-  commands; it does not execute processes
+- `astra-actions` — typed action discovery, strict policy evaluation, and
+  deterministic dry-run planning; it does not execute processes
 
 ## Live dashboard
 
@@ -84,8 +84,14 @@ human or versioned JSON rendering
 The initial vocabulary is deliberately limited to Cargo `build`, `check`, and
 `test`. Executable paths, argument vectors, working directories, source, and
 confidence remain structured. No shell strings are stored or interpreted, and
-the resolver never spawns a process. Execution, policy, history, and remote
-actions belong to later milestones.
+the resolver and policy never spawn a process. The policy permits only the
+current context-engine shape `cargo <build|check|test> --workspace` and
+requires the canonical working directory to remain inside the project root.
+`astra project run` produces a dry-run plan with `process_started: false`;
+its context pass uses the existing engine with its repository-process boundary
+disabled. Ordinary `astra context` inspection retains its bounded Git
+inspection. Real execution, history, and remote actions belong to later
+milestones.
 
 ## Dependency direction
 

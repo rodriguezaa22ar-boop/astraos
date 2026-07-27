@@ -6,14 +6,18 @@ use tempfile::{tempdir, TempDir};
 
 fn project() -> TempDir {
     let directory = tempdir().expect("project directory");
-    fs::create_dir_all(directory.path().join("src")).expect("source directory");
+    write_project_at(directory.path());
+    directory
+}
+
+fn write_project_at(directory: &Path) {
+    fs::create_dir_all(directory.join("src")).expect("source directory");
     fs::write(
-        directory.path().join("Cargo.toml"),
+        directory.join("Cargo.toml"),
         "[workspace]\nresolver = \"2\"\n",
     )
     .expect("workspace manifest");
-    fs::write(directory.path().join("src/lib.rs"), "pub fn ready() {}\n").expect("source");
-    directory
+    fs::write(directory.join("src/lib.rs"), "pub fn ready() {}\n").expect("source");
 }
 
 fn project_without_commands() -> TempDir {
@@ -53,7 +57,23 @@ fn project_help_lists_the_explicit_subcommands() {
         .stdout(predicate::str::contains("list"))
         .stdout(predicate::str::contains("inspect"))
         .stdout(predicate::str::contains("commands"))
+        .stdout(predicate::str::contains("run"))
         .stdout(predicate::str::contains("create"));
+}
+
+#[test]
+fn project_run_help_requires_and_describes_dry_run() {
+    astra(
+        tempdir().expect("home").path(),
+        tempdir().expect("current directory").path(),
+    )
+    .args(["project", "run", "--help"])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains("<NAME>"))
+    .stdout(predicate::str::contains("<ACTION>"))
+    .stdout(predicate::str::contains("--dry-run"))
+    .stdout(predicate::str::contains("without starting a process"));
 }
 
 #[test]
@@ -239,4 +259,125 @@ fn project_commands_never_executes_detected_commands() {
         .args(["project", "commands", "demo"])
         .assert()
         .success();
+}
+
+#[test]
+fn project_run_dry_run_supports_build_check_and_test_without_execution() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project = project();
+    write_config(home.path(), &[("demo", project.path())]);
+
+    for action in ["build", "check", "test"] {
+        let output = astra(home.path(), current.path())
+            .args(["project", "run", "demo", action, "--dry-run"])
+            .output()
+            .expect("dry-run output");
+        assert!(output.status.success(), "action {action} failed");
+        let stdout = String::from_utf8(output.stdout).expect("UTF-8 output");
+        assert!(stdout.contains(&format!("Action: {action}")));
+        assert!(stdout.contains("Policy: allowed"));
+        assert!(stdout.contains("Dry run complete. No process was started."));
+    }
+}
+
+#[test]
+fn project_run_json_is_versioned_and_never_starts_a_process() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project = project();
+    write_config(home.path(), &[("demo", project.path())]);
+
+    let output = astra(home.path(), current.path())
+        .args(["project", "run", "demo", "check", "--dry-run", "--json"])
+        .output()
+        .expect("dry-run JSON");
+    assert!(output.status.success());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("dry-run JSON");
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["project"]["name"], "demo");
+    assert_eq!(json["action"]["id"], "check");
+    assert_eq!(
+        json["action"]["arguments"],
+        serde_json::json!(["check", "--workspace"])
+    );
+    assert_eq!(json["policy"]["decision"], "allowed");
+    assert_eq!(json["execution"]["mode"], "dry_run");
+    assert_eq!(json["execution"]["process_started"], false);
+}
+
+#[test]
+fn project_run_requires_explicit_dry_run() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+
+    astra(home.path(), current.path())
+        .args(["project", "run", "demo", "check"])
+        .assert()
+        .failure()
+        .stderr("astra: real action execution is not available; use --dry-run\n");
+}
+
+#[test]
+fn project_run_reports_unknown_unsupported_and_unavailable_actions() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project = project();
+    let empty = project_without_commands();
+    let missing = current.path().join("missing");
+    write_config(
+        home.path(),
+        &[
+            ("demo", project.path()),
+            ("empty", empty.path()),
+            ("missing", &missing),
+        ],
+    );
+
+    astra(home.path(), current.path())
+        .args(["project", "run", "nonexistent", "check", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr("astra: unknown project: nonexistent\n");
+    astra(home.path(), current.path())
+        .args(["project", "run", "demo", "deploy", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr("astra: unsupported action: deploy\n");
+    astra(home.path(), current.path())
+        .args(["project", "run", "empty", "check", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr("astra: project does not expose action: check for empty\n");
+    astra(home.path(), current.path())
+        .args(["project", "run", "missing", "check", "--dry-run"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("project path does not exist"));
+}
+
+#[test]
+fn project_run_does_not_create_config_or_modify_project_files() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project_root = home.path().join("Developer/projects/astraos");
+    write_project_at(&project_root);
+    let manifest_before = fs::read(project_root.join("Cargo.toml")).expect("manifest");
+    let source_before = fs::read(project_root.join("src/lib.rs")).expect("source");
+    let config_path = home.path().join("astra-config/config.toml");
+
+    astra(home.path(), current.path())
+        .args(["project", "run", "astraos", "check", "--dry-run"])
+        .assert()
+        .success();
+
+    assert!(!config_path.exists());
+    assert_eq!(
+        fs::read(project_root.join("Cargo.toml")).expect("manifest"),
+        manifest_before
+    );
+    assert_eq!(
+        fs::read(project_root.join("src/lib.rs")).expect("source"),
+        source_before
+    );
 }

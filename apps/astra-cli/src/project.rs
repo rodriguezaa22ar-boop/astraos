@@ -1,5 +1,8 @@
-use crate::{context, ProjectCommands, ProjectCommandsArgs, ProjectInspectArgs};
-use astra_actions::{resolve_actions, ProjectAction, ProjectActionReport, ProjectReference};
+use crate::{context, ProjectCommands, ProjectCommandsArgs, ProjectInspectArgs, ProjectRunArgs};
+use astra_actions::{
+    resolve_actions, select_action, ActionId, ActionPolicy, DryRunReport, ExecutionPlan,
+    PolicyDecision, PolicyRejectionReason, ProjectAction, ProjectActionReport, ProjectReference,
+};
 use astra_config::{load_if_present, Config};
 use astra_workspaces::{list_workspaces, workspace_path};
 use std::{fmt, fs, path::PathBuf};
@@ -14,6 +17,10 @@ pub(crate) enum ProjectError {
     Context(String),
     Serialization(String),
     Output(String),
+    DryRunRequired,
+    InvalidAction(String),
+    ActionUnavailable { project: String, action: ActionId },
+    PolicyRejected(PolicyRejectionReason),
 }
 
 impl fmt::Display for ProjectError {
@@ -39,6 +46,19 @@ impl fmt::Display for ProjectError {
                 write!(formatter, "could not serialize project actions: {message}")
             }
             Self::Output(message) => formatter.write_str(message),
+            Self::DryRunRequired => {
+                formatter.write_str("real action execution is not available; use --dry-run")
+            }
+            Self::InvalidAction(action) => write!(formatter, "unsupported action: {action}"),
+            Self::ActionUnavailable { project, action } => {
+                write!(
+                    formatter,
+                    "project does not expose action: {action} for {project}"
+                )
+            }
+            Self::PolicyRejected(reason) => {
+                write!(formatter, "action rejected by policy: {reason}")
+            }
         }
     }
 }
@@ -48,10 +68,50 @@ pub(crate) fn run(command: ProjectCommands) -> Result<(), ProjectError> {
         ProjectCommands::List => list(),
         ProjectCommands::Inspect(arguments) => inspect(arguments),
         ProjectCommands::Commands(arguments) => commands(arguments),
+        ProjectCommands::Run(arguments) => run_action(arguments),
         ProjectCommands::Create { kind, name } => {
             crate::create_project(&kind, &name).map_err(ProjectError::Output)
         }
     }
+}
+
+fn run_action(arguments: ProjectRunArgs) -> Result<(), ProjectError> {
+    if !arguments.dry_run {
+        return Err(ProjectError::DryRunRequired);
+    }
+
+    let action_id = ActionId::parse(&arguments.action)
+        .ok_or_else(|| ProjectError::InvalidAction(arguments.action.clone()))?;
+    let config = load_project_config()?;
+    let root = resolve_registered_project(&config, &arguments.name)?;
+    let report = context::analyze_without_processes(&root).map_err(ProjectError::Context)?;
+    let actions = absolutize_actions(resolve_actions(&report.context.validation_commands), &root);
+    let action =
+        select_action(&actions, action_id).ok_or_else(|| ProjectError::ActionUnavailable {
+            project: arguments.name.clone(),
+            action: action_id,
+        })?;
+    let project = ProjectReference {
+        name: arguments.name.clone(),
+        root,
+    };
+    let evaluation = ActionPolicy.evaluate(&project, &action);
+    let plan = ExecutionPlan::new(project, evaluation.action, evaluation.decision);
+    let dry_run = DryRunReport::new(plan);
+
+    if arguments.json {
+        let rendered = serde_json::to_string_pretty(&dry_run)
+            .map_err(|error| ProjectError::Serialization(error.to_string()))?;
+        println!("{rendered}");
+    } else {
+        print_dry_run(&dry_run);
+    }
+
+    if let PolicyDecision::Rejected { reason } = dry_run.plan.policy {
+        return Err(ProjectError::PolicyRejected(reason));
+    }
+
+    Ok(())
 }
 
 fn load_project_config() -> Result<Config, ProjectError> {
@@ -174,6 +234,31 @@ fn print_actions(project_name: &str, actions: &[ProjectAction]) {
             action.id.as_str(),
             display_command(&action.command.executable, &action.command.arguments)
         );
+    }
+}
+
+fn print_dry_run(report: &DryRunReport) {
+    let action = &report.plan.action;
+    println!("Project: {}", report.plan.project.name);
+    println!("Action: {}", action.id.as_str());
+    println!(
+        "Working directory: {}",
+        action.command.working_directory.display()
+    );
+    println!("Executable: {}", shell_quote(&action.command.executable));
+    println!("Arguments:");
+    for argument in &action.command.arguments {
+        println!("  - {}", shell_quote(argument));
+    }
+    match &report.plan.policy {
+        PolicyDecision::Allowed => println!("Policy: allowed"),
+        PolicyDecision::Rejected { reason } => println!("Policy: rejected ({reason})"),
+    }
+    println!();
+    if report.plan.policy.is_allowed() {
+        println!("Dry run complete. No process was started.");
+    } else {
+        println!("Dry run rejected. No process was started.");
     }
 }
 

@@ -1,6 +1,6 @@
 use astra_context::Confidence;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
 /// Version of the serialized project-action report contract.
 pub const PROJECT_ACTION_SCHEMA_VERSION: u32 = 1;
@@ -20,6 +20,29 @@ impl ActionId {
             Self::Check => "check",
             Self::Test => "test",
         }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "build" => Some(Self::Build),
+            "check" => Some(Self::Check),
+            "test" => Some(Self::Test),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ActionId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ActionId {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse(value).ok_or(())
     }
 }
 
