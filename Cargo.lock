@@ -96,6 +96,7 @@ name = "astra"
 version = "0.3.0"
 dependencies = [
  "assert_cmd",
+ "astra-actions",
  "astra-config",
  "astra-context",
  "astra-core",
@@ -105,10 +106,20 @@ dependencies = [
  "astra-workspaces",
  "clap",
  "predicates",
+ "serde_json",
  "tempfile",
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "astra-actions"
+version = "0.3.0"
+dependencies = [
+ "astra-context",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -16,6 +16,8 @@
   keyboard input, and rendering
 - `astra-context` — provider-neutral project analysis, immutable project
   facts, structured context, derived insights, and deterministic renderers
+- `astra-actions` — typed, read-only action discovery from context validation
+  commands; it does not execute processes
 
 ## Live dashboard
 
@@ -61,6 +63,29 @@ primary testing evidence.
 `ProjectContext`, scanner results, diagnostics, and factual insights. Semantic
 discoveries retain confidence and evidence. Runtime-only information such as
 scan duration is excluded from deterministic serialization.
+
+## Project action engine
+
+`astra-actions` is a downstream adapter from `astra-context` to a small,
+typed action vocabulary. The CLI resolves a registered project through
+`astra-workspaces`, asks `ProjectAnalyzer` for its structured validation
+commands, and passes those commands to the pure action resolver:
+
+```text
+registered project
+        ↓
+ProjectAnalyzer → validation CommandSpec values
+        ↓
+astra-actions resolver → ProjectAction values
+        ↓
+human or versioned JSON rendering
+```
+
+The initial vocabulary is deliberately limited to Cargo `build`, `check`, and
+`test`. Executable paths, argument vectors, working directories, source, and
+confidence remain structured. No shell strings are stored or interpreted, and
+the resolver never spawns a process. Execution, policy, history, and remote
+actions belong to later milestones.
 
 ## Dependency direction
 

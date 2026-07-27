@@ -20,11 +20,19 @@
 - Live system metrics
 - Project status
 
-## v0.7+
+## v0.8
 
-- Plugin system
 - Provider-neutral Project Context Engine with deterministic text, JSON, and
   semantic-tree output
-- Future AI orchestration consuming structured project context
+
+## v0.9
+
+- Read-only Project Action Engine foundation with typed Cargo build/check/test
+  discovery
+
+## Future
+
+- Explicit action policy and process execution
+- AI orchestration consuming structured project context
 - Cybersecurity workflows
 - Stable installer and release channel

@@ -10,6 +10,7 @@ members = [
     "crates/astra-projects",
     "crates/astra-dashboard",
     "crates/astra-context",
+    "crates/astra-actions",
 ]
 
 default-members = [
@@ -36,6 +37,7 @@ astra-system = { path = "crates/astra-system" }
 astra-workspaces = { path = "crates/astra-workspaces" }
 astra-projects = { path = "crates/astra-projects" }
 astra-context = { path = "crates/astra-context" }
+astra-actions = { path = "crates/astra-actions" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

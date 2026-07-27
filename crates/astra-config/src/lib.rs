@@ -5,7 +5,7 @@ mod model;
 mod paths;
 
 pub use error::ConfigError;
-pub use loader::{load, save};
+pub use loader::{load, load_if_present, save};
 pub use model::{AiConfig, Config, CyberConfig, EditorConfig, WorkspaceConfig};
 pub use paths::{config_dir, config_path};
 

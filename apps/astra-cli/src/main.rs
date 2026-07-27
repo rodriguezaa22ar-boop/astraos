@@ -1,4 +1,5 @@
 mod context;
+mod project;
 
 use astra_config::{config_path, load, save, Config};
 use astra_core::VERSION;
@@ -15,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
 };
-use tracing::{error, info};
+use tracing::info;
 
 #[derive(Debug, Parser)]
 #[command(name = "astra", version = VERSION, about = "AstraOS command center")]
@@ -36,8 +37,8 @@ enum Commands {
         command: WorkspaceCommands,
     },
     Project {
-        kind: String,
-        name: String,
+        #[command(subcommand)]
+        command: ProjectCommands,
     },
     Config {
         #[command(subcommand)]
@@ -62,6 +63,34 @@ enum ContextCommands {
         #[arg(value_name = "PATH", default_value = ".")]
         path: PathBuf,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectCommands {
+    /// List registered projects in deterministic order.
+    List,
+    /// Inspect a registered project through the project context engine.
+    Inspect(ProjectInspectArgs),
+    /// Discover supported, read-only actions for a registered project.
+    Commands(ProjectCommandsArgs),
+    /// Create a project scaffold (legacy behavior under an explicit command).
+    Create { kind: String, name: String },
+}
+
+#[derive(Debug, Args)]
+struct ProjectInspectArgs {
+    #[arg(value_name = "NAME")]
+    name: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProjectCommandsArgs {
+    #[arg(value_name = "NAME")]
+    name: String,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -103,7 +132,6 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            error!("{message}");
             eprintln!("astra: {message}");
             ExitCode::FAILURE
         }
@@ -127,7 +155,7 @@ fn run() -> Result<(), String> {
         }
         Commands::Doctor => doctor(),
         Commands::Workspace { command } => workspace_command(command),
-        Commands::Project { kind, name } => create_project(&kind, &name),
+        Commands::Project { command } => project::run(command).map_err(|error| error.to_string()),
         Commands::Config { command } => config_command(command),
         Commands::Context(arguments) => context_command(arguments),
     }
