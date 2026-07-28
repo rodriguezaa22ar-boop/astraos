@@ -183,6 +183,7 @@ dependencies = [
 name = "astra-intelligence"
 version = "0.3.0"
 dependencies = [
+ "astra-knowledge",
  "serde",
  "serde_json",
  "sha2",
