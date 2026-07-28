@@ -1,3 +1,4 @@
+mod capability;
 mod error;
 mod executor;
 mod fingerprint;
@@ -6,6 +7,7 @@ mod plan;
 mod process;
 mod state;
 
+pub use capability::{controlled_execution_capability, ControlledExecutionCapability};
 pub use error::ExecutionError;
 pub use executor::{
     ExecutionEngine, ExecutionResult, ProcessExecutionSummary, StateComparison,

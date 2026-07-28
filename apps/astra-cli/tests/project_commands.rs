@@ -1,4 +1,10 @@
 use assert_cmd::Command;
+use astra_actions::{resolve_actions, ProjectReference};
+use astra_execution::ExecutionEngine;
+use astra_knowledge::{
+    Confidence as KnowledgeConfidence, Evidence, EvidenceKind, KnowledgeCategory, KnowledgeClaim,
+    KnowledgeNamespace, KnowledgeStore, Validity, ValidityCondition,
+};
 use predicates::prelude::*;
 use serde_json::Value;
 use std::{fs, path::Path, process::Command as ProcessCommand};
@@ -105,7 +111,139 @@ fn project_help_lists_the_explicit_subcommands() {
         .stdout(predicate::str::contains("inspect"))
         .stdout(predicate::str::contains("commands"))
         .stdout(predicate::str::contains("run"))
+        .stdout(predicate::str::contains("understand"))
         .stdout(predicate::str::contains("create"));
+}
+
+#[test]
+fn project_understand_is_deterministic_read_only_and_hides_knowledge_values() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project = project();
+    write_config(home.path(), &[("demo", project.path())]);
+    let knowledge_root = home.path().join(".astra/knowledge");
+    let store = KnowledgeStore::open(&knowledge_root);
+    let claim = KnowledgeClaim::new(
+        KnowledgeCategory::Fact,
+        "project:demo",
+        "has_private_note",
+        serde_json::json!("ASTRA_INTELLIGENCE_SECRET_SENTINEL"),
+        vec![Evidence::new(
+            EvidenceKind::ContextFact,
+            "fact:private-note",
+        )],
+        KnowledgeConfidence::High,
+        Validity::Current,
+    )
+    .and_then(|claim| claim.with_created_at("2026-01-01T00:00:00Z"))
+    .expect("claim");
+    store
+        .add_claim(&KnowledgeNamespace::project("demo"), &claim)
+        .expect("stored claim");
+    let before_project = fs::read(project.path().join("Cargo.toml")).expect("manifest");
+    let before_claim = fs::read(
+        knowledge_root
+            .join("projects/demo/facts")
+            .join(format!("{}.json", claim.id)),
+    )
+    .expect("claim file");
+
+    let first = astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--json"])
+        .output()
+        .expect("understanding output");
+    let second = astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--json"])
+        .output()
+        .expect("repeat understanding output");
+    assert!(first.status.success());
+    assert_eq!(first.stdout, second.stdout);
+    let json: Value = serde_json::from_slice(&first.stdout).expect("understanding JSON");
+    assert_eq!(json["schema_version"], 1);
+    assert_eq!(json["project"]["name"], "demo");
+    let output = String::from_utf8(first.stdout).expect("UTF-8 output");
+    assert!(!output.contains("ASTRA_INTELLIGENCE_SECRET_SENTINEL"));
+    assert!(!output.contains(project.path().to_string_lossy().as_ref()));
+    assert_eq!(
+        fs::read(project.path().join("Cargo.toml")).expect("manifest"),
+        before_project
+    );
+    assert_eq!(
+        fs::read(
+            knowledge_root
+                .join("projects/demo/facts")
+                .join(format!("{}.json", claim.id))
+        )
+        .expect("claim file"),
+        before_claim
+    );
+}
+
+#[test]
+fn project_understand_projects_a_stale_verification_without_running_cargo() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project = git_project();
+    write_config(home.path(), &[("demo", project.path())]);
+    let report =
+        astra_context::ProjectAnalyzer::without_processes(astra_context::ScanOptions::default())
+            .expect("analyzer")
+            .analyze(project.path())
+            .expect("context report");
+    let actions = resolve_actions(&report.context.validation_commands);
+    let check = actions
+        .into_iter()
+        .find(|action| action.id == astra_actions::ActionId::Check)
+        .expect("check action");
+    let state = ExecutionEngine::new()
+        .plan(
+            &ProjectReference {
+                name: "demo".to_string(),
+                root: project.path().canonicalize().expect("canonical root"),
+            },
+            &check,
+        )
+        .expect("state plan")
+        .source_state
+        .combined_fingerprint
+        .to_string();
+    let knowledge_root = home.path().join(".astra/knowledge");
+    let claim = KnowledgeClaim::new(
+        KnowledgeCategory::Verification,
+        "project:demo",
+        "check",
+        serde_json::json!({"action":"check", "verdict":"verified_check"}),
+        vec![Evidence::new(
+            EvidenceKind::ExecutionResult,
+            "execution:stale",
+        )],
+        KnowledgeConfidence::Certain,
+        Validity::Current,
+    )
+    .and_then(|claim| claim.with_created_at("2026-01-01T00:00:00Z"))
+    .map(|claim| {
+        claim.with_validity_conditions(vec![ValidityCondition::state_bound(
+            format!("different-{state}"),
+            "action-fingerprint",
+            "plan-fingerprint",
+        )])
+    })
+    .expect("verification claim");
+    KnowledgeStore::open(&knowledge_root)
+        .add_claim(&KnowledgeNamespace::project("demo"), &claim)
+        .expect("stored claim");
+
+    astra_with_path(home.path(), current.path())
+        .args(["project", "understand", "demo"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "The latest verification does not apply to the current project state.",
+        ))
+        .stdout(predicate::str::contains(
+            "The latest verification is stale for the current project state.",
+        ))
+        .stdout(predicate::str::contains("Executing approved plan").not());
 }
 
 #[test]

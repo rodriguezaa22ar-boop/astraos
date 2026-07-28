@@ -80,6 +80,8 @@ enum ProjectCommands {
     Commands(ProjectCommandsArgs),
     /// Evaluate a discovered action through the dry-run policy.
     Run(ProjectRunArgs),
+    /// Build a read-only, evidence-backed understanding report.
+    Understand(ProjectUnderstandArgs),
     /// Create a project scaffold (legacy behavior under an explicit command).
     Create { kind: String, name: String },
 }
@@ -112,6 +114,16 @@ struct ProjectRunArgs {
     #[arg(long)]
     dry_run: bool,
     /// Print deterministic JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProjectUnderstandArgs {
+    /// Registered project name.
+    #[arg(value_name = "NAME")]
+    name: String,
+    /// Print deterministic, versioned JSON.
     #[arg(long)]
     json: bool,
 }

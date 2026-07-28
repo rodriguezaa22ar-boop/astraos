@@ -45,6 +45,12 @@
 - File-backed verification claims with state-aware validity
 - Read-only `astra knowledge` queries
 
+## v0.13
+
+- Deterministic Project Intelligence Foundation
+- Read-only `astra project understand` reports
+- Evidence-backed runtime relationship graph and grounded insights
+
 ## Future
 
 - AI orchestration consuming structured project context
