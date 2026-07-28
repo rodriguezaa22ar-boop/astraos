@@ -21,6 +21,9 @@
 - `astra-knowledge` — independent evidence-backed claims, validity,
   relationships, and versioned file-backed storage; it does not depend on
   context, actions, execution, or AI providers
+- `astra-intelligence` — pure deterministic synthesis of explicit context,
+  action, capability, and projected-knowledge inputs into a runtime graph and
+  project-understanding model; it performs no I/O or mutation
 
 ## Live dashboard
 
@@ -126,11 +129,31 @@ read-only `astra knowledge` queries expose the stored model. No mutation,
 planning, semantic search, embeddings, or AI orchestration is part of this
 milestone.
 
+## Project intelligence foundation
+
+`astra-intelligence` turns explicitly supplied live observations, discovered
+actions, neutral controlled-execution capability data, and projected knowledge
+into a versioned `ProjectIntelligence` model. Its runtime graph is deliberately
+different from a persisted knowledge relationship: knowledge relationships are
+durable claim connections, while intelligence edges describe current model
+connections. Both require safe provenance references.
+
+The CLI remains the orchestration boundary for `astra project understand
+<NAME> [--json]`. It resolves the registered project, gathers no-process
+context, maps policy and execution capability without invoking a project
+action, reads and projects knowledge validity, then calls the pure analyzer.
+The analyzer emits only deterministic observed data, operator-decided decision
+entities, and non-authoritative derived insights. It never exposes absolute
+paths, raw knowledge values, source content, command output, environment data,
+or a broad health score. Operator annotations, corrections, and overrides are
+deferred to Milestone 13.1.
+
 ## Dependency direction
 
 Applications may depend on crates. Lower-level crates should not depend on the
 CLI application. The dependency flow for controlled checks remains
 `astra-context` → `astra-actions` → `astra-execution` → `astra-cli`; knowledge
 is an independent foundational crate and its producer adapters currently live
-in `astra-cli`. Neither execution nor knowledge depends on the CLI, and
-`astra-actions` remains process-free.
+in `astra-cli`. `astra-intelligence` consumes a neutral input contract and has
+no dependency on execution, knowledge storage, or the CLI. Neither execution
+nor knowledge depends on the CLI, and `astra-actions` remains process-free.

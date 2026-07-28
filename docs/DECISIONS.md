@@ -20,3 +20,7 @@ Use this file for small engineering decisions that do not require a full ADR.
   `astra-knowledge`, not an execution log or AI memory store. Versioned JSON
   files preserve historical claims and state-aware validity without coupling
   the model to context, actions, or execution.
+- Project intelligence is a pure, read-only model layer in
+  `astra-intelligence`. It receives explicit normalized inputs at the CLI
+  boundary and produces runtime graph edges and deterministic insights without
+  scanning, executing, reading storage, planning, or mutating knowledge.

@@ -102,6 +102,7 @@ dependencies = [
  "astra-core",
  "astra-dashboard",
  "astra-execution",
+ "astra-intelligence",
  "astra-knowledge",
  "astra-projects",
  "astra-system",
@@ -175,6 +176,16 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "astra-intelligence"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror",
 ]
 
