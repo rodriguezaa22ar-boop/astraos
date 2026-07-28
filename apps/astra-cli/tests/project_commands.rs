@@ -423,6 +423,15 @@ fn acceptance_resolves_then_expires_and_can_be_reaffirmed_without_execution() {
     let expired: Value = serde_json::from_slice(&expired.stdout).expect("expired JSON");
     assert_eq!(expired["active_response_count"], 0);
     assert_eq!(expired["explanations"][0]["lifecycle"], "expired");
+    let projected_list = astra(home.path(), current.path())
+        .args(["project", "responses", "list", "demo", "--json"])
+        .output()
+        .expect("projected response list");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&projected_list.stdout).expect("list JSON")["responses"][0]
+            ["lifecycle"],
+        "expired"
+    );
 
     let reaffirmed = astra(home.path(), current.path())
         .args([
@@ -522,14 +531,7 @@ fn correction_draft_edit_preview_activation_and_retirement_preserve_base() {
 
     let activated = astra(home.path(), current.path())
         .args([
-            "project",
-            "response",
-            "activate",
-            "demo",
-            &draft_id,
-            "--supersedes",
-            &accepted_id,
-            "--json",
+            "project", "response", "activate", "demo", &draft_id, "--json",
         ])
         .output()
         .expect("activation");

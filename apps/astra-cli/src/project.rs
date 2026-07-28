@@ -664,10 +664,7 @@ struct OperatorPreviewReport {
 fn responses(command: ProjectResponsesCommands) -> Result<(), ProjectError> {
     match command {
         ProjectResponsesCommands::List(arguments) => {
-            ensure_registered_project(&arguments.project)?;
-            let responses = operator_store()?
-                .list_operator_responses(&arguments.project)
-                .map_err(authority_error)?;
+            let responses = projected_operator_responses(&arguments.project)?;
             if arguments.json {
                 print_json(&OperatorResponsesReport {
                     schema_version: OPERATOR_RESPONSE_SCHEMA_VERSION,
@@ -680,14 +677,8 @@ fn responses(command: ProjectResponsesCommands) -> Result<(), ProjectError> {
             }
         }
         ProjectResponsesCommands::Show(arguments) => {
-            ensure_registered_project(&arguments.project)?;
             let id = response_id(&arguments.response)?;
-            let response = operator_store()?
-                .get_operator_response(&arguments.project, &id)
-                .map_err(authority_error)?
-                .ok_or_else(|| {
-                    ProjectError::Authority(format!("operator response not found: {id}"))
-                })?;
+            let response = load_projected_operator_response(&arguments.project, &id)?;
             render_response(&arguments.project, response, arguments.json)
         }
         ProjectResponsesCommands::History(arguments) => {
@@ -831,13 +822,10 @@ fn response(command: ProjectResponseCommands) -> Result<(), ProjectError> {
             let id = response_id(&arguments.response)?;
             let stored = load_operator_response(&arguments.project, &id)?;
             let target = resolve_bound_target(&base, &stored.target)?;
+            let supersedes =
+                optional_response_id(arguments.supersedes.as_deref())?.or(stored.supersedes);
             let activated = operator_store()?
-                .activate_operator_response(
-                    &arguments.project,
-                    &id,
-                    &target,
-                    optional_response_id(arguments.supersedes.as_deref())?,
-                )
+                .activate_operator_response(&arguments.project, &id, &target, supersedes)
                 .map_err(authority_error)?;
             render_response(&arguments.project, activated, arguments.json)
         }
@@ -932,7 +920,7 @@ fn edit_response(arguments: ProjectResponseEditArgs) -> Result<(), ProjectError>
 fn preview_response(arguments: ProjectResponseShowArgs) -> Result<(), ProjectError> {
     let base = build_base_intelligence(&arguments.project)?;
     let id = response_id(&arguments.response)?;
-    let response = load_operator_response(&arguments.project, &id)?;
+    let response = load_projected_operator_response(&arguments.project, &id)?;
     let current_target = resolve_bound_target(&base, &response.target).ok();
     let target_matches = current_target
         .as_ref()
@@ -1038,6 +1026,37 @@ fn load_operator_response(
     operator_store()?
         .get_operator_response(project, id)
         .map_err(authority_error)?
+        .ok_or_else(|| ProjectError::Authority(format!("operator response not found: {id}")))
+}
+
+fn projected_operator_responses(project: &str) -> Result<Vec<OperatorResponse>, ProjectError> {
+    let base = build_base_intelligence(project)?;
+    let mut responses = operator_store()?
+        .list_operator_responses(project)
+        .map_err(authority_error)?;
+    let resolved = OperatorAuthorityResolver
+        .resolve(&base, &responses, true)
+        .map_err(|error| ProjectError::Intelligence(error.to_string()))?;
+    let lifecycle = resolved
+        .explanations
+        .into_iter()
+        .map(|explanation| (explanation.response_id, explanation.lifecycle))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for response in &mut responses {
+        if let Some(projected) = lifecycle.get(&response.id) {
+            response.lifecycle = *projected;
+        }
+    }
+    Ok(responses)
+}
+
+fn load_projected_operator_response(
+    project: &str,
+    id: &OperatorResponseId,
+) -> Result<OperatorResponse, ProjectError> {
+    projected_operator_responses(project)?
+        .into_iter()
+        .find(|response| response.id == *id)
         .ok_or_else(|| ProjectError::Authority(format!("operator response not found: {id}")))
 }
 

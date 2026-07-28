@@ -109,7 +109,7 @@ pub struct OperatorIdentity {
 impl OperatorIdentity {
     pub fn local(display_name: impl Into<String>) -> Result<Self, KnowledgeError> {
         let display_name = display_name.into();
-        validate_text("operator display name", &display_name)?;
+        validate_identifier("operator display name", &display_name)?;
         Ok(Self {
             id: OperatorId::local(),
             stable_key: None,
@@ -125,7 +125,7 @@ impl OperatorIdentity {
         let stable_key = stable_key.into();
         let display_name = display_name.into();
         validate_identifier("operator stable key", &stable_key)?;
-        validate_text("operator display name", &display_name)?;
+        validate_identifier("operator display name", &display_name)?;
         Ok(Self {
             id: OperatorId::named(&stable_key),
             stable_key: Some(stable_key),
@@ -255,7 +255,7 @@ impl OperatorTargetBinding {
         let target_id = target_id.into();
         let statement = statement.into();
         validate_identifier("target ID", &target_id)?;
-        validate_text("target statement", &statement)?;
+        validate_identifier("target statement", &statement)?;
         if let Some(rule_id) = &rule_id {
             validate_identifier("rule ID", rule_id)?;
         }
@@ -464,7 +464,7 @@ impl OperatorResponse {
                 "a response cannot supersede itself".to_string(),
             ));
         }
-        validate_text("operator display name", &self.operator.display_name)?;
+        validate_identifier("operator display name", &self.operator.display_name)?;
         match self.operator.kind {
             OperatorIdentityKind::LocalOperator
                 if self.operator.id == OperatorId::local()
@@ -680,7 +680,13 @@ mod tests {
     #[test]
     fn obvious_sensitive_text_and_absolute_paths_are_rejected() {
         assert!(matches!(
-            OperatorIdentity::local("api token"),
+            OperatorResponsePayload::Annotation(AnnotationPayload {
+                statement: "api token".to_string(),
+                intent: OperatorIntent::Context,
+                scope: AnnotationScope::Persistent,
+                confidence: None,
+            })
+            .validate(),
             Err(KnowledgeError::SensitiveOperatorResponse(_))
         ));
         assert!(OperatorTargetBinding::new(

@@ -550,6 +550,7 @@ impl KnowledgeStore {
         project: &str,
     ) -> Result<Vec<OperatorResponseHistoryEntry>, KnowledgeError> {
         validate_project_name(project)?;
+        self.replay_operator_responses(project)?;
         let transactions = self.committed_operator_transactions(project)?;
         transactions
             .into_iter()
@@ -583,6 +584,7 @@ impl KnowledgeStore {
         let path = directory.join(".lock");
         match OpenOptions::new().create_new(true).write(true).open(&path) {
             Ok(mut file) => {
+                let guard = OperatorStoreLock { path: path.clone() };
                 file.write_all(b"operator transaction lock\n")
                     .map_err(|source| KnowledgeError::Io {
                         path: path.clone(),
@@ -592,7 +594,7 @@ impl KnowledgeStore {
                     path: path.clone(),
                     source,
                 })?;
-                Ok(OperatorStoreLock { path })
+                Ok(guard)
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 Err(KnowledgeError::OperatorStoreBusy)
