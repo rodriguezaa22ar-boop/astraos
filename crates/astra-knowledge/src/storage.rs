@@ -255,8 +255,12 @@ impl KnowledgeStore {
         }
         let _lock = self.operator_lock(&request.project)?;
         let current = self.replay_operator_responses(&request.project)?;
+        let superseded = superseded_response_ids(current.values().map(|entry| &entry.response));
         validate_governing_response(
-            current.values().map(|entry| &entry.response),
+            current
+                .values()
+                .map(|entry| &entry.response)
+                .filter(|response| !superseded.contains(&response.id)),
             &request.target,
             &request.payload,
             request.supersedes.as_ref(),
@@ -285,6 +289,224 @@ impl KnowledgeStore {
             &request.project,
             transaction_id,
             OperatorHistoryOperation::Create,
+            response.clone(),
+            None,
+        )?;
+        Ok(response)
+    }
+
+    pub fn edit_operator_response_draft(
+        &self,
+        project: &str,
+        id: &OperatorResponseId,
+        payload: crate::OperatorResponsePayload,
+    ) -> Result<OperatorResponse, KnowledgeError> {
+        validate_project_name(project)?;
+        payload.validate()?;
+        if payload.initial_lifecycle() != ResponseLifecycle::Draft {
+            return Err(KnowledgeError::InvalidResponseTransition(
+                "a draft cannot be edited into an immediate-active response".to_string(),
+            ));
+        }
+        let _lock = self.operator_lock(project)?;
+        let current = self.replay_operator_responses(project)?;
+        let previous = current
+            .get(id)
+            .ok_or_else(|| KnowledgeError::OperatorResponseNotFound(id.to_string()))?;
+        if previous.response.lifecycle != ResponseLifecycle::Draft {
+            return Err(KnowledgeError::InvalidResponseTransition(
+                "only draft responses are editable".to_string(),
+            ));
+        }
+        let (transaction_id, response_id) = self.allocate_operator_ids(project, false)?;
+        if response_id.is_some() {
+            return Err(KnowledgeError::InvalidOperatorResponse(
+                "draft edit unexpectedly allocated a response ID".to_string(),
+            ));
+        }
+        let mut response = previous.response.clone();
+        response.payload = payload;
+        response.audit = ResponseAuditMetadata {
+            transaction_id: transaction_id.clone(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        response.validate()?;
+        self.commit_response_transaction(
+            project,
+            transaction_id,
+            OperatorHistoryOperation::EditDraft,
+            response.clone(),
+            Some(previous.transaction_id.clone()),
+        )?;
+        Ok(response)
+    }
+
+    pub fn delete_operator_response_draft(
+        &self,
+        project: &str,
+        id: &OperatorResponseId,
+    ) -> Result<(), KnowledgeError> {
+        validate_project_name(project)?;
+        let _lock = self.operator_lock(project)?;
+        let current = self.replay_operator_responses(project)?;
+        let previous = current
+            .get(id)
+            .ok_or_else(|| KnowledgeError::OperatorResponseNotFound(id.to_string()))?;
+        if previous.response.lifecycle != ResponseLifecycle::Draft {
+            return Err(KnowledgeError::InvalidResponseTransition(
+                "only draft responses are deletable".to_string(),
+            ));
+        }
+        let (transaction_id, response_id) = self.allocate_operator_ids(project, false)?;
+        if response_id.is_some() {
+            return Err(KnowledgeError::InvalidOperatorResponse(
+                "draft deletion unexpectedly allocated a response ID".to_string(),
+            ));
+        }
+        self.commit_delete_transaction(
+            project,
+            transaction_id,
+            id.clone(),
+            previous.transaction_id.clone(),
+        )
+    }
+
+    pub fn activate_operator_response(
+        &self,
+        project: &str,
+        id: &OperatorResponseId,
+        current_target: &crate::OperatorTargetBinding,
+        supersedes: Option<OperatorResponseId>,
+    ) -> Result<OperatorResponse, KnowledgeError> {
+        validate_project_name(project)?;
+        current_target.validate()?;
+        let _lock = self.operator_lock(project)?;
+        let current = self.replay_operator_responses(project)?;
+        let previous = current
+            .get(id)
+            .ok_or_else(|| KnowledgeError::OperatorResponseNotFound(id.to_string()))?;
+        if previous.response.lifecycle != ResponseLifecycle::Draft {
+            return Err(KnowledgeError::InvalidResponseTransition(
+                "only draft responses can be activated".to_string(),
+            ));
+        }
+        if !previous.response.target.exact_match(current_target) {
+            return Err(KnowledgeError::OperatorTargetChanged);
+        }
+        let superseded = superseded_response_ids(current.values().map(|entry| &entry.response));
+        validate_governing_response(
+            current
+                .values()
+                .map(|entry| &entry.response)
+                .filter(|response| response.id != *id && !superseded.contains(&response.id)),
+            current_target,
+            &previous.response.payload,
+            supersedes.as_ref(),
+        )?;
+        let (transaction_id, response_id) = self.allocate_operator_ids(project, false)?;
+        if response_id.is_some() {
+            return Err(KnowledgeError::InvalidOperatorResponse(
+                "draft activation unexpectedly allocated a response ID".to_string(),
+            ));
+        }
+        let mut response = previous.response.clone();
+        response.lifecycle = ResponseLifecycle::Active;
+        response.supersedes = supersedes;
+        response.audit = ResponseAuditMetadata {
+            transaction_id: transaction_id.clone(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        response.validate()?;
+        self.commit_response_transaction(
+            project,
+            transaction_id,
+            OperatorHistoryOperation::Activate,
+            response.clone(),
+            Some(previous.transaction_id.clone()),
+        )?;
+        Ok(response)
+    }
+
+    pub fn retire_operator_response(
+        &self,
+        project: &str,
+        id: &OperatorResponseId,
+    ) -> Result<OperatorResponse, KnowledgeError> {
+        self.transition_active_response(
+            project,
+            id,
+            ResponseLifecycle::Retired,
+            OperatorHistoryOperation::Retire,
+        )
+    }
+
+    pub fn withdraw_operator_response(
+        &self,
+        project: &str,
+        id: &OperatorResponseId,
+    ) -> Result<OperatorResponse, KnowledgeError> {
+        self.transition_active_response(
+            project,
+            id,
+            ResponseLifecycle::Withdrawn,
+            OperatorHistoryOperation::Withdraw,
+        )
+    }
+
+    pub fn reaffirm_operator_response(
+        &self,
+        project: &str,
+        id: &OperatorResponseId,
+        current_target: crate::OperatorTargetBinding,
+    ) -> Result<OperatorResponse, KnowledgeError> {
+        validate_project_name(project)?;
+        current_target.validate()?;
+        let _lock = self.operator_lock(project)?;
+        let current = self.replay_operator_responses(project)?;
+        let previous = current
+            .get(id)
+            .ok_or_else(|| KnowledgeError::OperatorResponseNotFound(id.to_string()))?;
+        if previous.response.lifecycle == ResponseLifecycle::Draft {
+            return Err(KnowledgeError::InvalidResponseTransition(
+                "draft responses must be activated, not reaffirmed".to_string(),
+            ));
+        }
+        let superseded = superseded_response_ids(current.values().map(|entry| &entry.response));
+        if superseded.contains(id) {
+            return Err(KnowledgeError::InvalidResponseTransition(
+                "a superseded response cannot be reaffirmed".to_string(),
+            ));
+        }
+        if previous.response.payload.is_governing() {
+            validate_governing_response(
+                current
+                    .values()
+                    .map(|entry| &entry.response)
+                    .filter(|response| !superseded.contains(&response.id)),
+                &current_target,
+                &previous.response.payload,
+                Some(id),
+            )?;
+        }
+        let (transaction_id, response_id) = self.allocate_operator_ids(project, true)?;
+        let mut response = previous.response.clone();
+        response.id = response_id.ok_or_else(|| {
+            KnowledgeError::InvalidOperatorResponse(
+                "reaffirmation did not allocate a response ID".to_string(),
+            )
+        })?;
+        response.target = current_target;
+        response.lifecycle = ResponseLifecycle::Active;
+        response.supersedes = Some(id.clone());
+        response.audit = ResponseAuditMetadata {
+            transaction_id: transaction_id.clone(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        response.validate()?;
+        self.commit_response_transaction(
+            project,
+            transaction_id,
+            OperatorHistoryOperation::Reaffirm,
             response.clone(),
             None,
         )?;
@@ -454,6 +676,76 @@ impl KnowledgeStore {
                 transaction_id,
             },
         )
+    }
+
+    fn commit_delete_transaction(
+        &self,
+        project: &str,
+        transaction_id: OperatorTransactionId,
+        response_id: OperatorResponseId,
+        expected_transaction: OperatorTransactionId,
+    ) -> Result<(), KnowledgeError> {
+        let manifest = TransactionManifest {
+            schema_version: OPERATOR_RESPONSE_SCHEMA_VERSION,
+            transaction_id: transaction_id.clone(),
+            project: project.to_string(),
+            sequence: parse_sequence(transaction_id.as_str())?,
+            operation: OperatorHistoryOperation::DeleteDraft,
+            mutation: TransactionMutation::DeleteDraft { response_id },
+            expected_transaction: Some(expected_transaction),
+        };
+        let transaction_path = self.operator_transaction_path(project, &transaction_id)?;
+        self.write_json_atomic(&transaction_path.join("manifest.json"), &manifest)?;
+        self.write_json_atomic(
+            &transaction_path.join("commit.json"),
+            &TransactionCommit {
+                schema_version: OPERATOR_RESPONSE_SCHEMA_VERSION,
+                transaction_id,
+            },
+        )
+    }
+
+    fn transition_active_response(
+        &self,
+        project: &str,
+        id: &OperatorResponseId,
+        lifecycle: ResponseLifecycle,
+        operation: OperatorHistoryOperation,
+    ) -> Result<OperatorResponse, KnowledgeError> {
+        validate_project_name(project)?;
+        let _lock = self.operator_lock(project)?;
+        let current = self.replay_operator_responses(project)?;
+        let previous = current
+            .get(id)
+            .ok_or_else(|| KnowledgeError::OperatorResponseNotFound(id.to_string()))?;
+        let superseded = superseded_response_ids(current.values().map(|entry| &entry.response));
+        if previous.response.lifecycle != ResponseLifecycle::Active || superseded.contains(id) {
+            return Err(KnowledgeError::InvalidResponseTransition(
+                "only an effective active response may transition".to_string(),
+            ));
+        }
+        let (transaction_id, response_id) = self.allocate_operator_ids(project, true)?;
+        let mut response = previous.response.clone();
+        response.id = response_id.ok_or_else(|| {
+            KnowledgeError::InvalidOperatorResponse(
+                "lifecycle transition did not allocate a response ID".to_string(),
+            )
+        })?;
+        response.lifecycle = lifecycle;
+        response.supersedes = Some(id.clone());
+        response.audit = ResponseAuditMetadata {
+            transaction_id: transaction_id.clone(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        response.validate()?;
+        self.commit_response_transaction(
+            project,
+            transaction_id,
+            operation,
+            response.clone(),
+            None,
+        )?;
+        Ok(response)
     }
 
     fn replay_operator_responses(
@@ -839,6 +1131,17 @@ fn parse_sequence(id: &str) -> Result<u64, KnowledgeError> {
         })
 }
 
+fn superseded_response_ids<'a>(
+    responses: impl Iterator<Item = &'a OperatorResponse>,
+) -> Vec<OperatorResponseId> {
+    let mut ids = responses
+        .filter_map(|response| response.supersedes.clone())
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 fn validate_governing_response<'a>(
     responses: impl Iterator<Item = &'a OperatorResponse>,
     target: &crate::OperatorTargetBinding,
@@ -882,8 +1185,9 @@ mod tests {
         confidence::Confidence,
         evidence::{Evidence, EvidenceKind},
         operator::{
-            AcceptancePayload, AnnotationPayload, AnnotationScope, NewOperatorResponse,
-            OperatorIdentity, OperatorIntent, OperatorResponsePayload, OperatorTargetBinding,
+            AcceptancePayload, AnnotationPayload, AnnotationScope, CorrectionPayload,
+            DisputePayload, NewOperatorResponse, OperatorConfidence, OperatorIdentity,
+            OperatorIntent, OperatorResponsePayload, OperatorTargetBinding,
             OperatorTargetClassification, OperatorTargetKind,
         },
         relationship::RelationshipType,
@@ -1112,5 +1416,171 @@ mod tests {
             .expect("responses")
             .is_empty());
         assert!(prepared.join("manifest.json").exists());
+    }
+
+    #[test]
+    fn draft_edits_activation_and_deletion_preserve_transaction_history() {
+        let (_directory, store) = store();
+        let draft = store
+            .create_operator_response(operator_request(OperatorResponsePayload::Correction(
+                CorrectionPayload {
+                    replacement_statement: "One integrated system.".to_string(),
+                    reason: None,
+                    intent: OperatorIntent::Architecture,
+                    confidence: None,
+                },
+            )))
+            .expect("draft");
+        assert_eq!(draft.lifecycle, ResponseLifecycle::Draft);
+
+        let edited = store
+            .edit_operator_response_draft(
+                "demo",
+                &draft.id,
+                OperatorResponsePayload::Dispute(DisputePayload {
+                    reason: "More evidence is required.".to_string(),
+                    intent: Some(OperatorIntent::Context),
+                    confidence: Some(OperatorConfidence::Tentative),
+                }),
+            )
+            .expect("edited draft");
+        assert_eq!(edited.id, draft.id);
+        assert_ne!(edited.audit.transaction_id, draft.audit.transaction_id);
+
+        let changed_target = OperatorTargetBinding::new(
+            "pi-insight-v1-changed",
+            OperatorTargetKind::Insight,
+            OperatorTargetClassification::Derived,
+            Some("PI-006".to_string()),
+            "Changed interpretation.",
+            vec!["context_field:changed".to_string()],
+            Vec::new(),
+        )
+        .expect("changed target");
+        assert!(matches!(
+            store.activate_operator_response("demo", &draft.id, &changed_target, None),
+            Err(KnowledgeError::OperatorTargetChanged)
+        ));
+        let active = store
+            .activate_operator_response("demo", &draft.id, &operator_target(), None)
+            .expect("active response");
+        assert_eq!(active.id, draft.id);
+        assert_eq!(active.lifecycle, ResponseLifecycle::Active);
+        assert_eq!(
+            store
+                .operator_response_history("demo")
+                .expect("history")
+                .len(),
+            3
+        );
+
+        let disposable = store
+            .create_operator_response(
+                operator_request(OperatorResponsePayload::Correction(CorrectionPayload {
+                    replacement_statement: "Temporary draft.".to_string(),
+                    reason: None,
+                    intent: OperatorIntent::Experiment,
+                    confidence: None,
+                }))
+                .with_supersedes(active.id),
+            )
+            .expect("disposable draft");
+        store
+            .delete_operator_response_draft("demo", &disposable.id)
+            .expect("delete draft");
+        assert!(store
+            .get_operator_response("demo", &disposable.id)
+            .expect("response")
+            .is_none());
+        assert!(store
+            .operator_response_history("demo")
+            .expect("history")
+            .iter()
+            .any(|entry| entry.operation == OperatorHistoryOperation::DeleteDraft));
+    }
+
+    #[test]
+    fn active_governance_requires_explicit_supersession_and_preserves_old_response() {
+        let (_directory, store) = store();
+        let accepted = store
+            .create_operator_response(operator_request(OperatorResponsePayload::Acceptance(
+                AcceptancePayload {
+                    reason: None,
+                    confidence: Some(OperatorConfidence::High),
+                },
+            )))
+            .expect("acceptance");
+        assert!(matches!(
+            store.create_operator_response(operator_request(OperatorResponsePayload::Acceptance(
+                AcceptancePayload {
+                    reason: Some("Second opinion.".to_string()),
+                    confidence: None,
+                }
+            ))),
+            Err(KnowledgeError::GoverningResponseConflict(_))
+        ));
+
+        let replacement = store
+            .create_operator_response(
+                operator_request(OperatorResponsePayload::Acceptance(AcceptancePayload {
+                    reason: Some("Reaffirmed.".to_string()),
+                    confidence: Some(OperatorConfidence::Certain),
+                }))
+                .with_supersedes(accepted.id.clone()),
+            )
+            .expect("replacement");
+        let responses = store.list_operator_responses("demo").expect("responses");
+        assert_eq!(responses.len(), 2);
+        assert_eq!(
+            responses
+                .iter()
+                .find(|response| response.id == accepted.id)
+                .expect("old response")
+                .lifecycle,
+            ResponseLifecycle::Superseded
+        );
+        assert_eq!(replacement.lifecycle, ResponseLifecycle::Active);
+
+        let retired = store
+            .retire_operator_response("demo", &replacement.id)
+            .expect("retired");
+        assert_eq!(retired.lifecycle, ResponseLifecycle::Retired);
+        assert_eq!(retired.supersedes, Some(replacement.id));
+    }
+
+    #[test]
+    fn reaffirmation_rebinds_without_rewriting_history() {
+        let (_directory, store) = store();
+        let accepted = store
+            .create_operator_response(operator_request(OperatorResponsePayload::Acceptance(
+                AcceptancePayload {
+                    reason: None,
+                    confidence: None,
+                },
+            )))
+            .expect("acceptance");
+        let new_target = OperatorTargetBinding::new(
+            "pi-insight-v1-new",
+            OperatorTargetKind::Insight,
+            OperatorTargetClassification::Derived,
+            Some("PI-006".to_string()),
+            "Updated package interpretation.",
+            vec!["context_field:workspace.packages.updated".to_string()],
+            vec!["pi-entity-v1-package".to_string()],
+        )
+        .expect("new target");
+        let reaffirmed = store
+            .reaffirm_operator_response("demo", &accepted.id, new_target.clone())
+            .expect("reaffirmed");
+        assert_ne!(reaffirmed.id, accepted.id);
+        assert_eq!(reaffirmed.target, new_target);
+        assert_eq!(reaffirmed.supersedes, Some(accepted.id));
+        assert_eq!(
+            store
+                .operator_response_history("demo")
+                .expect("history")
+                .len(),
+            2
+        );
     }
 }
