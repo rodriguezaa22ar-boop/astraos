@@ -9,3 +9,7 @@ Each ADR should include:
 - Decision
 - Alternatives considered
 - Consequences
+
+Milestone 12 ADR:
+
+- [0009 — Knowledge Foundation](0009-knowledge-foundation.md)

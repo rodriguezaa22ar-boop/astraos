@@ -102,11 +102,13 @@ dependencies = [
  "astra-core",
  "astra-dashboard",
  "astra-execution",
+ "astra-knowledge",
  "astra-projects",
  "astra-system",
  "astra-workspaces",
  "clap",
  "predicates",
+ "serde",
  "serde_json",
  "tempfile",
  "toml",
@@ -169,6 +171,19 @@ name = "astra-execution"
 version = "0.3.0"
 dependencies = [
  "astra-actions",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "astra-knowledge"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "dirs",
  "serde",
  "serde_json",
  "sha2",

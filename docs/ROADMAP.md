@@ -39,6 +39,12 @@
 - State-bound controlled execution of the approved Cargo workspace check
 - Bounded Git source-state capture and post-execution verification
 
+## v0.12
+
+- Evidence-backed, versioned Knowledge Foundation
+- File-backed verification claims with state-aware validity
+- Read-only `astra knowledge` queries
+
 ## Future
 
 - AI orchestration consuming structured project context

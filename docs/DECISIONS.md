@@ -16,3 +16,7 @@ Use this file for small engineering decisions that do not require a full ADR.
   Cargo workspace check may run, with direct argv invocation and post-run Git
   state verification. Build and test remain dry-run only until a later policy
   decision.
+- Knowledge is an independent, evidence-backed foundation in
+  `astra-knowledge`, not an execution log or AI memory store. Versioned JSON
+  files preserve historical claims and state-aware validity without coupling
+  the model to context, actions, or execution.
