@@ -126,6 +126,7 @@ impl OperatorAuthorityResolver {
 
         let superseded = responses
             .iter()
+            .filter(|response| response.lifecycle != ResponseLifecycle::Draft)
             .filter_map(|response| response.supersedes.clone())
             .collect::<BTreeSet<_>>();
         let mut projected = responses

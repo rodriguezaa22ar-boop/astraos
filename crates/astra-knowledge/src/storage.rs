@@ -519,10 +519,7 @@ impl KnowledgeStore {
     ) -> Result<Vec<OperatorResponse>, KnowledgeError> {
         validate_project_name(project)?;
         let current = self.replay_operator_responses(project)?;
-        let superseded = current
-            .values()
-            .filter_map(|entry| entry.response.supersedes.clone())
-            .collect::<Vec<_>>();
+        let superseded = superseded_response_ids(current.values().map(|entry| &entry.response));
         let mut responses = current
             .into_values()
             .map(|entry| entry.response)
@@ -1135,6 +1132,7 @@ fn superseded_response_ids<'a>(
     responses: impl Iterator<Item = &'a OperatorResponse>,
 ) -> Vec<OperatorResponseId> {
     let mut ids = responses
+        .filter(|response| response.lifecycle != ResponseLifecycle::Draft)
         .filter_map(|response| response.supersedes.clone())
         .collect::<Vec<_>>();
     ids.sort();

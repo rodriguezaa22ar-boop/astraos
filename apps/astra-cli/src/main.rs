@@ -82,6 +82,23 @@ enum ProjectCommands {
     Run(ProjectRunArgs),
     /// Build a read-only, evidence-backed understanding report.
     Understand(ProjectUnderstandArgs),
+    /// Inspect persisted operator responses.
+    Responses {
+        #[command(subcommand)]
+        command: project::ProjectResponsesCommands,
+    },
+    /// Govern derived project insights.
+    Insight {
+        #[command(subcommand)]
+        command: project::ProjectInsightCommands,
+    },
+    /// Add operator context to an intelligence target.
+    Annotate(project::ProjectAnnotateArgs),
+    /// Manage draft and active operator-response lifecycle.
+    Response {
+        #[command(subcommand)]
+        command: project::ProjectResponseCommands,
+    },
     /// Create a project scaffold (legacy behavior under an explicit command).
     Create { kind: String, name: String },
 }
@@ -126,6 +143,15 @@ struct ProjectUnderstandArgs {
     /// Print deterministic, versioned JSON.
     #[arg(long)]
     json: bool,
+    /// Show untouched Milestone 13 intelligence.
+    #[arg(long, conflicts_with_all = ["explain", "require_resolved"])]
+    base: bool,
+    /// Include operator-response provenance and lifecycle.
+    #[arg(long)]
+    explain: bool,
+    /// Fail if governing authority remains unresolved.
+    #[arg(long)]
+    require_resolved: bool,
 }
 
 #[derive(Debug, Subcommand)]
