@@ -1,4 +1,5 @@
 mod context;
+mod knowledge;
 mod project;
 
 use astra_config::{config_path, load, save, Config};
@@ -45,6 +46,10 @@ enum Commands {
         command: ConfigCommands,
     },
     Context(ContextArgs),
+    Knowledge {
+        #[command(subcommand)]
+        command: knowledge::KnowledgeCommands,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -195,6 +200,7 @@ fn run() -> Result<(), CliError> {
         }),
         Commands::Config { command } => adapt(config_command(command)),
         Commands::Context(arguments) => adapt(context_command(arguments)),
+        Commands::Knowledge { command } => adapt(knowledge::run(command)),
     }
 }
 

@@ -18,6 +18,9 @@
   facts, structured context, derived insights, and deterministic renderers
 - `astra-actions` — typed action discovery, strict policy evaluation, and
   deterministic dry-run planning; it does not execute processes
+- `astra-knowledge` — independent evidence-backed claims, validity,
+  relationships, and versioned file-backed storage; it does not depend on
+  context, actions, execution, or AI providers
 
 ## Live dashboard
 
@@ -104,9 +107,30 @@ diagnostics on stderr so stdout remains machine-readable. Execution history,
 policy configuration, retries, parallelism, and remote actions remain future
 work.
 
+## Knowledge foundation
+
+`astra-knowledge` is a foundational model rather than an execution log or AI
+memory store. A `KnowledgeClaim` has a category, deterministic ID, subject,
+predicate, JSON value, confidence, validity, evidence references, and optional
+state/action/plan validity conditions. Categories are facts, decisions,
+verifications, and goals. Evidence stores identifiers, locators, and
+fingerprints, not source contents, diffs, credentials, or terminal output.
+
+The knowledge crate is deliberately independent of `astra-context`,
+`astra-actions`, and `astra-execution`; producer adapters currently live at the
+CLI boundary. Claims are stored as schema-versioned JSON envelopes below
+`~/.astra/knowledge` using atomic writes. Historical claims are preserved and
+can be projected as stale when their state fingerprint no longer matches.
+`astra project run <NAME> check` records a compact verification claim, and
+read-only `astra knowledge` queries expose the stored model. No mutation,
+planning, semantic search, embeddings, or AI orchestration is part of this
+milestone.
+
 ## Dependency direction
 
 Applications may depend on crates. Lower-level crates should not depend on the
-CLI application. The dependency flow for controlled checks is
-`astra-context` → `astra-actions` → `astra-execution` → `astra-cli`; neither
-execution crate depends on the CLI, and `astra-actions` remains process-free.
+CLI application. The dependency flow for controlled checks remains
+`astra-context` → `astra-actions` → `astra-execution` → `astra-cli`; knowledge
+is an independent foundational crate and its producer adapters currently live
+in `astra-cli`. Neither execution nor knowledge depends on the CLI, and
+`astra-actions` remains process-free.

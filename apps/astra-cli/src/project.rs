@@ -18,6 +18,7 @@ pub(crate) enum ProjectError {
     NotDirectory(PathBuf),
     PathInspection(String),
     Context(String),
+    Knowledge(String),
     Serialization(String),
     Output(String),
     DryRunOnly(ActionId),
@@ -50,6 +51,10 @@ impl fmt::Display for ProjectError {
                 write!(formatter, "could not inspect project path: {message}")
             }
             Self::Context(message) => formatter.write_str(message),
+            Self::Knowledge(message) => write!(
+                formatter,
+                "could not persist verification knowledge: {message}"
+            ),
             Self::Serialization(message) => {
                 write!(formatter, "could not serialize project actions: {message}")
             }
@@ -171,8 +176,9 @@ fn run_check(arguments: ProjectRunArgs) -> Result<(), ProjectError> {
             action: ActionId::Check,
         }
     })?;
+    let project_name = arguments.name.clone();
     let project = ProjectReference {
-        name: arguments.name,
+        name: project_name,
         root,
     };
     let engine = ExecutionEngine::new();
@@ -195,6 +201,9 @@ fn run_check(arguments: ProjectRunArgs) -> Result<(), ProjectError> {
             },
         )
         .map_err(ProjectError::Execution)?;
+
+    crate::knowledge::record_verification(&arguments.name, &result)
+        .map_err(ProjectError::Knowledge)?;
 
     if arguments.json {
         let rendered = serde_json::to_string_pretty(&result)

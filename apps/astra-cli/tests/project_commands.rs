@@ -483,6 +483,48 @@ fn project_run_real_check_json_keeps_stdout_as_valid_json() {
 }
 
 #[test]
+fn project_run_real_check_persists_fingerprint_only_verification_knowledge() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let knowledge = tempdir().expect("knowledge");
+    let project = git_project();
+    write_config(home.path(), &[("demo", project.path())]);
+
+    astra_with_path(home.path(), current.path())
+        .env("ASTRA_KNOWLEDGE_DIR", knowledge.path())
+        .args(["project", "run", "demo", "check", "--json"])
+        .assert()
+        .success();
+
+    let output = astra_with_path(home.path(), current.path())
+        .env("ASTRA_KNOWLEDGE_DIR", knowledge.path())
+        .args(["knowledge", "verifications", "demo", "--json"])
+        .output()
+        .expect("knowledge output");
+    assert!(output.status.success());
+    let json: Value = serde_json::from_slice(&output.stdout).expect("knowledge JSON");
+    let claims = json["claims"].as_array().expect("claims");
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0]["category"], "verification");
+    assert_eq!(claims[0]["value"]["verdict"], "verified_check");
+    assert!(claims[0]["evidence"][0]["fingerprints"].is_array());
+    assert!(!output
+        .stdout
+        .windows(b"terminal output".len())
+        .any(|window| window == b"terminal output"));
+
+    fs::write(project.path().join("src/lib.rs"), "pub fn changed() {}\n").expect("changed source");
+    let stale = astra_with_path(home.path(), current.path())
+        .env("ASTRA_KNOWLEDGE_DIR", knowledge.path())
+        .args(["knowledge", "verifications", "demo", "--json"])
+        .output()
+        .expect("stale knowledge output");
+    assert!(stale.status.success());
+    let stale_json: Value = serde_json::from_slice(&stale.stdout).expect("stale JSON");
+    assert_eq!(stale_json["claims"][0]["validity"], "stale");
+}
+
+#[test]
 fn project_run_real_check_propagates_child_failure() {
     let home = tempdir().expect("home");
     let current = tempdir().expect("current directory");
