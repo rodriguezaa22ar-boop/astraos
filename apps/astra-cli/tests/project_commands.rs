@@ -16,6 +16,38 @@ fn project() -> TempDir {
     directory
 }
 
+fn intelligence_project() -> TempDir {
+    let directory = tempdir().expect("intelligence project directory");
+    fs::create_dir_all(directory.path().join("crates/app/src")).expect("app source");
+    fs::create_dir_all(directory.path().join("crates/core/src")).expect("core source");
+    fs::write(
+        directory.path().join("Cargo.toml"),
+        "[workspace]\nresolver = \"2\"\nmembers = [\"crates/app\", \"crates/core\"]\n",
+    )
+    .expect("workspace manifest");
+    fs::write(
+        directory.path().join("crates/app/Cargo.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("app manifest");
+    fs::write(
+        directory.path().join("crates/core/Cargo.toml"),
+        "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("core manifest");
+    fs::write(
+        directory.path().join("crates/app/src/lib.rs"),
+        "pub fn app() {}\n",
+    )
+    .expect("app source");
+    fs::write(
+        directory.path().join("crates/core/src/lib.rs"),
+        "pub fn core() {}\n",
+    )
+    .expect("core source");
+    directory
+}
+
 fn write_project_at(directory: &Path) {
     fs::create_dir_all(directory.join("src")).expect("source directory");
     fs::write(
@@ -112,6 +144,10 @@ fn project_help_lists_the_explicit_subcommands() {
         .stdout(predicate::str::contains("commands"))
         .stdout(predicate::str::contains("run"))
         .stdout(predicate::str::contains("understand"))
+        .stdout(predicate::str::contains("responses"))
+        .stdout(predicate::str::contains("insight"))
+        .stdout(predicate::str::contains("annotate"))
+        .stdout(predicate::str::contains("response"))
         .stdout(predicate::str::contains("create"));
 }
 
@@ -159,8 +195,8 @@ fn project_understand_is_deterministic_read_only_and_hides_knowledge_values() {
     assert!(first.status.success());
     assert_eq!(first.stdout, second.stdout);
     let json: Value = serde_json::from_slice(&first.stdout).expect("understanding JSON");
-    assert_eq!(json["schema_version"], 1);
-    assert_eq!(json["project"]["name"], "demo");
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["base_intelligence"]["project"]["name"], "demo");
     let output = String::from_utf8(first.stdout).expect("UTF-8 output");
     assert!(!output.contains("ASTRA_INTELLIGENCE_SECRET_SENTINEL"));
     assert!(!output.contains(project.path().to_string_lossy().as_ref()));
@@ -244,6 +280,401 @@ fn project_understand_projects_a_stale_verification_without_running_cargo() {
             "The latest verification is stale for the current project state.",
         ))
         .stdout(predicate::str::contains("Executing approved plan").not());
+}
+
+#[test]
+fn project_understand_base_and_resolved_modes_are_versioned_and_validate_options() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project = intelligence_project();
+    write_config(home.path(), &[("demo", project.path())]);
+
+    let resolved = astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--json"])
+        .output()
+        .expect("resolved output");
+    let base = astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--base", "--json"])
+        .output()
+        .expect("base output");
+    assert!(resolved.status.success());
+    assert!(base.status.success());
+    let resolved: Value = serde_json::from_slice(&resolved.stdout).expect("resolved JSON");
+    let base: Value = serde_json::from_slice(&base.stdout).expect("base JSON");
+    assert_eq!(resolved["schema_version"], 2);
+    assert_eq!(resolved["base_intelligence"], base);
+    assert_eq!(base["schema_version"], 1);
+
+    for invalid in [["--base", "--explain"], ["--base", "--require-resolved"]] {
+        astra(home.path(), current.path())
+            .args(["project", "understand", "demo", invalid[0], invalid[1]])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("cannot be used with"));
+    }
+}
+
+#[test]
+fn acceptance_resolves_then_expires_and_can_be_reaffirmed_without_execution() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project = intelligence_project();
+    write_config(home.path(), &[("demo", project.path())]);
+
+    let accepted = astra(home.path(), current.path())
+        .args([
+            "project",
+            "insight",
+            "accept",
+            "demo",
+            "PI-006",
+            "--confidence",
+            "high",
+            "--json",
+        ])
+        .output()
+        .expect("acceptance");
+    assert!(accepted.status.success());
+    let accepted: Value = serde_json::from_slice(&accepted.stdout).expect("acceptance JSON");
+    let response_id = accepted["response"]["id"]
+        .as_str()
+        .expect("response ID")
+        .to_string();
+    assert_eq!(accepted["response"]["lifecycle"], "active");
+    assert_eq!(accepted["response"]["target"]["rule_id"], "PI-006");
+
+    let first = astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--json"])
+        .output()
+        .expect("resolved output");
+    let second = astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--json"])
+        .output()
+        .expect("repeat resolved output");
+    assert_eq!(first.stdout, second.stdout);
+    let resolved: Value = serde_json::from_slice(&first.stdout).expect("resolved JSON");
+    let pi_006 = resolved["resolved_interpretations"]
+        .as_array()
+        .expect("interpretations")
+        .iter()
+        .find(|interpretation| interpretation["rule_id"] == "PI-006")
+        .expect("PI-006");
+    assert_eq!(pi_006["status"], "accepted");
+
+    let listed = astra(home.path(), current.path())
+        .args(["project", "responses", "list", "demo", "--json"])
+        .output()
+        .expect("response list");
+    let shown = astra(home.path(), current.path())
+        .args([
+            "project",
+            "responses",
+            "show",
+            "demo",
+            &response_id,
+            "--json",
+        ])
+        .output()
+        .expect("response show");
+    let history = astra(home.path(), current.path())
+        .args(["project", "responses", "history", "demo", "--json"])
+        .output()
+        .expect("response history");
+    assert!(listed.status.success());
+    assert!(shown.status.success());
+    assert!(history.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&listed.stdout).expect("list JSON")["responses"]
+            .as_array()
+            .expect("responses")
+            .len(),
+        1
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&history.stdout).expect("history JSON")["history"]
+            .as_array()
+            .expect("history")
+            .len(),
+        1
+    );
+
+    fs::create_dir_all(project.path().join("crates/extra/src")).expect("extra source");
+    fs::write(
+        project.path().join("crates/extra/Cargo.toml"),
+        "[package]\nname = \"extra\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("extra manifest");
+    fs::write(
+        project.path().join("crates/extra/src/lib.rs"),
+        "pub fn extra() {}\n",
+    )
+    .expect("extra source");
+    fs::write(
+        project.path().join("Cargo.toml"),
+        "[workspace]\nresolver = \"2\"\nmembers = [\"crates/app\", \"crates/core\", \"crates/extra\"]\n",
+    )
+    .expect("updated workspace manifest");
+
+    let expired = astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--explain", "--json"])
+        .output()
+        .expect("expired output");
+    assert!(expired.status.success());
+    let expired: Value = serde_json::from_slice(&expired.stdout).expect("expired JSON");
+    assert_eq!(expired["active_response_count"], 0);
+    assert_eq!(expired["explanations"][0]["lifecycle"], "expired");
+
+    let reaffirmed = astra(home.path(), current.path())
+        .args([
+            "project",
+            "response",
+            "reaffirm",
+            "demo",
+            &response_id,
+            "--json",
+        ])
+        .output()
+        .expect("reaffirmation");
+    assert!(reaffirmed.status.success());
+    let reaffirmed: Value = serde_json::from_slice(&reaffirmed.stdout).expect("reaffirmation JSON");
+    assert_eq!(reaffirmed["response"]["lifecycle"], "active");
+    assert_eq!(reaffirmed["response"]["supersedes"], response_id);
+}
+
+#[test]
+fn correction_draft_edit_preview_activation_and_retirement_preserve_base() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project = intelligence_project();
+    write_config(home.path(), &[("demo", project.path())]);
+
+    let accepted = astra(home.path(), current.path())
+        .args(["project", "insight", "accept", "demo", "PI-006", "--json"])
+        .output()
+        .expect("acceptance");
+    let accepted: Value = serde_json::from_slice(&accepted.stdout).expect("acceptance JSON");
+    let accepted_id = accepted["response"]["id"]
+        .as_str()
+        .expect("accepted ID")
+        .to_string();
+
+    let draft = astra(home.path(), current.path())
+        .args([
+            "project",
+            "insight",
+            "correct",
+            "demo",
+            "PI-006",
+            "--statement",
+            "Initial replacement.",
+            "--intent",
+            "architecture",
+            "--supersedes",
+            &accepted_id,
+            "--json",
+        ])
+        .output()
+        .expect("correction draft");
+    assert!(draft.status.success());
+    let draft: Value = serde_json::from_slice(&draft.stdout).expect("draft JSON");
+    let draft_id = draft["response"]["id"]
+        .as_str()
+        .expect("draft ID")
+        .to_string();
+    assert_eq!(draft["response"]["lifecycle"], "draft");
+
+    let before_activation = astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--json"])
+        .output()
+        .expect("before activation");
+    let before_activation: Value =
+        serde_json::from_slice(&before_activation.stdout).expect("resolved JSON");
+    let before_pi_006 = before_activation["resolved_interpretations"]
+        .as_array()
+        .expect("interpretations")
+        .iter()
+        .find(|interpretation| interpretation["rule_id"] == "PI-006")
+        .expect("PI-006");
+    assert_eq!(before_pi_006["status"], "accepted");
+
+    astra(home.path(), current.path())
+        .args([
+            "project",
+            "response",
+            "edit",
+            "demo",
+            &draft_id,
+            "--statement",
+            "Packages are implementation boundaries within one integrated system.",
+            "--reason",
+            "Operator architecture intent.",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&draft_id));
+    astra(home.path(), current.path())
+        .args([
+            "project", "response", "preview", "demo", &draft_id, "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"target_matches\": true"));
+
+    let activated = astra(home.path(), current.path())
+        .args([
+            "project",
+            "response",
+            "activate",
+            "demo",
+            &draft_id,
+            "--supersedes",
+            &accepted_id,
+            "--json",
+        ])
+        .output()
+        .expect("activation");
+    assert!(activated.status.success());
+
+    let resolved = astra(home.path(), current.path())
+        .args([
+            "project",
+            "understand",
+            "demo",
+            "--explain",
+            "--require-resolved",
+            "--json",
+        ])
+        .output()
+        .expect("corrected output");
+    assert!(resolved.status.success());
+    let resolved: Value = serde_json::from_slice(&resolved.stdout).expect("resolved JSON");
+    let pi_006 = resolved["resolved_interpretations"]
+        .as_array()
+        .expect("interpretations")
+        .iter()
+        .find(|interpretation| interpretation["rule_id"] == "PI-006")
+        .expect("PI-006");
+    assert_eq!(pi_006["status"], "corrected");
+    assert_eq!(
+        pi_006["resolved_statement"],
+        "Packages are implementation boundaries within one integrated system."
+    );
+    assert!(resolved["explanations"]
+        .as_array()
+        .expect("explanations")
+        .iter()
+        .any(|explanation| explanation["lifecycle"] == "superseded"));
+
+    let base = astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--base", "--json"])
+        .output()
+        .expect("base output");
+    let base: Value = serde_json::from_slice(&base.stdout).expect("base JSON");
+    assert!(base["insights"]
+        .as_array()
+        .expect("base insights")
+        .iter()
+        .any(|insight| {
+            insight["rule_id"] == "PI-006"
+                && insight["statement"]
+                    == "The project is divided into multiple workspace packages."
+        }));
+
+    astra(home.path(), current.path())
+        .args(["project", "response", "retire", "demo", &draft_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("retired"));
+}
+
+#[test]
+fn annotation_rejection_dispute_delete_withdraw_and_unresolved_contract_work() {
+    let home = tempdir().expect("home");
+    let current = tempdir().expect("current directory");
+    let project = intelligence_project();
+    write_config(home.path(), &[("demo", project.path())]);
+
+    let annotation = astra(home.path(), current.path())
+        .args([
+            "project",
+            "annotate",
+            "demo",
+            "PI-006",
+            "--statement",
+            "One integrated product.",
+            "--intent",
+            "context",
+            "--state-bound",
+            "--json",
+        ])
+        .output()
+        .expect("annotation");
+    assert!(annotation.status.success());
+    let annotation: Value = serde_json::from_slice(&annotation.stdout).expect("annotation JSON");
+    let annotation_id = annotation["response"]["id"]
+        .as_str()
+        .expect("annotation ID")
+        .to_string();
+
+    let rejection = astra(home.path(), current.path())
+        .args([
+            "project",
+            "insight",
+            "reject",
+            "demo",
+            "PI-006",
+            "--reason",
+            "Interpretation is too broad.",
+            "--json",
+        ])
+        .output()
+        .expect("rejection");
+    assert!(rejection.status.success());
+    let rejection: Value = serde_json::from_slice(&rejection.stdout).expect("rejection JSON");
+    let rejection_id = rejection["response"]["id"]
+        .as_str()
+        .expect("rejection ID")
+        .to_string();
+    assert_eq!(rejection["response"]["lifecycle"], "draft");
+    astra(home.path(), current.path())
+        .args(["project", "response", "delete", "demo", &rejection_id])
+        .assert()
+        .success();
+
+    let dispute = astra(home.path(), current.path())
+        .args([
+            "project",
+            "insight",
+            "dispute",
+            "demo",
+            "PI-006",
+            "--reason",
+            "Need more evidence.",
+            "--json",
+        ])
+        .output()
+        .expect("dispute");
+    assert!(dispute.status.success());
+    let dispute: Value = serde_json::from_slice(&dispute.stdout).expect("dispute JSON");
+    let dispute_id = dispute["response"]["id"]
+        .as_str()
+        .expect("dispute ID")
+        .to_string();
+    astra(home.path(), current.path())
+        .args(["project", "response", "activate", "demo", &dispute_id])
+        .assert()
+        .success();
+    astra(home.path(), current.path())
+        .args(["project", "understand", "demo", "--require-resolved"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unresolved operator authority"));
+
+    astra(home.path(), current.path())
+        .args(["project", "response", "withdraw", "demo", &annotation_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("withdrawn"));
 }
 
 #[test]
