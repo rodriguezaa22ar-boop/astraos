@@ -18,7 +18,7 @@ impl IntelligenceEvidenceRef {
         }
     }
 
-    pub(crate) fn canonical_key(&self) -> String {
+    pub fn canonical_key(&self) -> String {
         match self {
             Self::ContextField { field } => format!("context_field:{field}"),
             Self::ContextPackage { package } => format!("context_package:{package}"),

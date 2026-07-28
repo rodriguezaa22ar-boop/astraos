@@ -19,8 +19,8 @@
 - `astra-actions` — typed action discovery, strict policy evaluation, and
   deterministic dry-run planning; it does not execute processes
 - `astra-knowledge` — independent evidence-backed claims, validity,
-  relationships, and versioned file-backed storage; it does not depend on
-  context, actions, execution, or AI providers
+  relationships, operator responses, and versioned file-backed storage; it
+  does not depend on context, actions, execution, intelligence, or AI providers
 - `astra-intelligence` — pure deterministic synthesis of explicit context,
   action, capability, and projected-knowledge inputs into a runtime graph and
   project-understanding model; it performs no I/O or mutation
@@ -142,11 +142,27 @@ The CLI remains the orchestration boundary for `astra project understand
 <NAME> [--json]`. It resolves the registered project, gathers no-process
 context, maps policy and execution capability without invoking a project
 action, reads and projects knowledge validity, then calls the pure analyzer.
-The analyzer emits only deterministic observed data, operator-decided decision
-entities, and non-authoritative derived insights. It never exposes absolute
-paths, raw knowledge values, source content, command output, environment data,
-or a broad health score. Operator annotations, corrections, and overrides are
-deferred to Milestone 13.1.
+The base analyzer emits only deterministic observed data, operator-decided
+decision entities, and non-authoritative derived insights. It never exposes
+absolute paths, raw knowledge values, source content, command output,
+environment data, or a broad health score.
+
+## Operator authority foundation
+
+`astra-knowledge` owns typed operator responses and their file-backed lifecycle.
+Responses are distinct from claims: claims describe evidence-backed knowledge,
+while responses describe how an operator governs a derived interpretation.
+Observed targets cannot be corrected. Versioned transaction manifests,
+immutable response revisions, and commit markers preserve history; only
+committed transactions affect understanding.
+
+`astra-intelligence` consumes committed responses through a pure resolver. It
+keeps the base `ProjectIntelligence` untouched and projects a separate resolved
+model containing active authority, conflicts, annotations, and optional
+explanations. The CLI owns target selectors, project lookup, storage access,
+and rendering. Drafts never affect resolution, active replacement requires
+explicit supersession, and target drift becomes expired, review-required, or
+orphaned rather than silently rewriting authority.
 
 ## Dependency direction
 
@@ -154,6 +170,7 @@ Applications may depend on crates. Lower-level crates should not depend on the
 CLI application. The dependency flow for controlled checks remains
 `astra-context` → `astra-actions` → `astra-execution` → `astra-cli`; knowledge
 is an independent foundational crate and its producer adapters currently live
-in `astra-cli`. `astra-intelligence` consumes a neutral input contract and has
-no dependency on execution, knowledge storage, or the CLI. Neither execution
-nor knowledge depends on the CLI, and `astra-actions` remains process-free.
+in `astra-cli`. `astra-intelligence` depends on the neutral operator-response
+vocabulary but not knowledge storage; it has no dependency on execution or the
+CLI. Neither execution nor knowledge depends on intelligence or the CLI, and
+`astra-actions` remains process-free.

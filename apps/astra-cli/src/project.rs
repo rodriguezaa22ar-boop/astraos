@@ -12,15 +12,250 @@ use astra_execution::{
     ExecutionError, ExecutionOutputMode, ExecutionResult, VerificationVerdict,
 };
 use astra_intelligence::{
-    render_text as render_intelligence_text, ActionInput, DeterministicProjectIntelligenceAnalyzer,
-    ExecutionCapabilityInput, IntelligenceConfidence, IntelligenceEvidenceRef,
-    KnowledgeCategoryInput, KnowledgeClaimInput, ProjectContextInput, ProjectIdentityInput,
+    authority_targets, render_resolved_text, render_text as render_intelligence_text, ActionInput,
+    DeterministicProjectIntelligenceAnalyzer, ExecutionCapabilityInput, IntelligenceConfidence,
+    IntelligenceEvidenceRef, KnowledgeCategoryInput, KnowledgeClaimInput,
+    OperatorAuthorityResolver, ProjectContextInput, ProjectIdentityInput, ProjectIntelligence,
     ProjectIntelligenceAnalyzer, ProjectIntelligenceInput, ProjectKnowledgeInput, RepositoryInput,
-    VerificationValidity, WorkspacePackageInput,
+    ResolutionStatus, VerificationValidity, WorkspacePackageInput,
 };
-use astra_knowledge::{KnowledgeCategory, KnowledgeNamespace, KnowledgeStore, Validity};
+use astra_knowledge::{
+    AcceptancePayload, AnnotationPayload, AnnotationScope, CorrectionPayload, DisputePayload,
+    KnowledgeCategory, KnowledgeNamespace, KnowledgeStore, NewOperatorResponse, OperatorConfidence,
+    OperatorHistoryOperation, OperatorIdentity, OperatorIntent, OperatorResponse,
+    OperatorResponseHistoryEntry, OperatorResponseId, OperatorResponsePayload,
+    OperatorTargetBinding, RejectionPayload, Validity, OPERATOR_RESPONSE_SCHEMA_VERSION,
+};
 use astra_workspaces::{list_workspaces, workspace_path};
+use clap::{Args, Subcommand, ValueEnum};
+use serde::Serialize;
 use std::{fmt, fs, path::PathBuf};
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProjectResponsesCommands {
+    /// List current operator-response records.
+    List(ProjectResponsesListArgs),
+    /// Show one operator response.
+    Show(ProjectResponseShowArgs),
+    /// Show committed response transaction history.
+    History(ProjectResponsesListArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProjectInsightCommands {
+    /// Accept one derived insight immediately.
+    Accept(ProjectInsightAcceptArgs),
+    /// Create a rejection draft.
+    Reject(ProjectInsightRejectArgs),
+    /// Create a correction draft.
+    Correct(ProjectInsightCorrectArgs),
+    /// Create a dispute draft.
+    Dispute(ProjectInsightDisputeArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProjectResponseCommands {
+    /// Edit the typed payload of a draft response.
+    Edit(ProjectResponseEditArgs),
+    /// Preview a response and its current target binding.
+    Preview(ProjectResponseShowArgs),
+    /// Delete a draft response while preserving transaction history.
+    Delete(ProjectResponseMutationArgs),
+    /// Activate a draft after revalidating its target.
+    Activate(ProjectResponseActivateArgs),
+    /// Retire an active response.
+    Retire(ProjectResponseMutationArgs),
+    /// Withdraw an active response.
+    Withdraw(ProjectResponseMutationArgs),
+    /// Reaffirm a response against the current target.
+    Reaffirm(ProjectResponseMutationArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectResponsesListArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectResponseShowArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "RESPONSE")]
+    response: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectResponseMutationArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "RESPONSE")]
+    response: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectResponseActivateArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "RESPONSE")]
+    response: String,
+    #[arg(long, value_name = "RESPONSE_ID")]
+    supersedes: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectAnnotateArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "TARGET")]
+    target: String,
+    #[arg(long, value_name = "TEXT")]
+    statement: String,
+    #[arg(long, value_enum)]
+    intent: OperatorIntentArg,
+    #[arg(long)]
+    state_bound: bool,
+    #[arg(long, value_enum)]
+    confidence: Option<OperatorConfidenceArg>,
+    #[command(flatten)]
+    operator: OperatorArgs,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectInsightAcceptArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "INSIGHT")]
+    insight: String,
+    #[arg(long, value_name = "TEXT")]
+    reason: Option<String>,
+    #[arg(long, value_enum)]
+    confidence: Option<OperatorConfidenceArg>,
+    #[arg(long, value_name = "RESPONSE_ID")]
+    supersedes: Option<String>,
+    #[command(flatten)]
+    operator: OperatorArgs,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectInsightRejectArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "INSIGHT")]
+    insight: String,
+    #[arg(long, value_name = "TEXT")]
+    reason: String,
+    #[arg(long, value_enum)]
+    intent: Option<OperatorIntentArg>,
+    #[arg(long, value_enum)]
+    confidence: Option<OperatorConfidenceArg>,
+    #[arg(long, value_name = "RESPONSE_ID")]
+    supersedes: Option<String>,
+    #[command(flatten)]
+    operator: OperatorArgs,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectInsightCorrectArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "INSIGHT")]
+    insight: String,
+    #[arg(long, value_name = "TEXT")]
+    statement: String,
+    #[arg(long, value_name = "TEXT")]
+    reason: Option<String>,
+    #[arg(long, value_enum)]
+    intent: OperatorIntentArg,
+    #[arg(long, value_enum)]
+    confidence: Option<OperatorConfidenceArg>,
+    #[arg(long, value_name = "RESPONSE_ID")]
+    supersedes: Option<String>,
+    #[command(flatten)]
+    operator: OperatorArgs,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectInsightDisputeArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "INSIGHT")]
+    insight: String,
+    #[arg(long, value_name = "TEXT")]
+    reason: String,
+    #[arg(long, value_enum)]
+    intent: Option<OperatorIntentArg>,
+    #[arg(long, value_enum)]
+    confidence: Option<OperatorConfidenceArg>,
+    #[arg(long, value_name = "RESPONSE_ID")]
+    supersedes: Option<String>,
+    #[command(flatten)]
+    operator: OperatorArgs,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectResponseEditArgs {
+    #[arg(value_name = "PROJECT")]
+    project: String,
+    #[arg(value_name = "RESPONSE")]
+    response: String,
+    #[arg(long, value_name = "TEXT")]
+    statement: Option<String>,
+    #[arg(long, value_name = "TEXT")]
+    reason: Option<String>,
+    #[arg(long, value_enum)]
+    intent: Option<OperatorIntentArg>,
+    #[arg(long, value_enum)]
+    confidence: Option<OperatorConfidenceArg>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct OperatorArgs {
+    /// Stable key for a named local operator.
+    #[arg(long, value_name = "KEY")]
+    operator: Option<String>,
+    /// Display name stored with this historical response.
+    #[arg(long, value_name = "NAME", requires = "operator")]
+    operator_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OperatorConfidenceArg {
+    Certain,
+    High,
+    Medium,
+    Tentative,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OperatorIntentArg {
+    Architecture,
+    Decision,
+    Preference,
+    TemporaryConstraint,
+    Experiment,
+    Context,
+}
 
 #[derive(Debug)]
 pub(crate) enum ProjectError {
@@ -32,6 +267,10 @@ pub(crate) enum ProjectError {
     Context(String),
     Intelligence(String),
     Knowledge(String),
+    Authority(String),
+    TargetNotFound(String),
+    TargetAmbiguous(String),
+    UnresolvedAuthority,
     Serialization(String),
     Output(String),
     DryRunOnly(ActionId),
@@ -68,10 +307,17 @@ impl fmt::Display for ProjectError {
                 formatter,
                 "could not build project understanding: {message}"
             ),
-            Self::Knowledge(message) => write!(
-                formatter,
-                "could not persist verification knowledge: {message}"
-            ),
+            Self::Knowledge(message) => write!(formatter, "knowledge operation failed: {message}"),
+            Self::Authority(message) => write!(formatter, "operator authority failed: {message}"),
+            Self::TargetNotFound(selector) => {
+                write!(formatter, "intelligence target not found: {selector}")
+            }
+            Self::TargetAmbiguous(selector) => {
+                write!(formatter, "intelligence target is ambiguous: {selector}")
+            }
+            Self::UnresolvedAuthority => {
+                formatter.write_str("project understanding has unresolved operator authority")
+            }
             Self::Serialization(message) => {
                 write!(formatter, "could not serialize project actions: {message}")
             }
@@ -131,6 +377,10 @@ pub(crate) fn run(command: ProjectCommands) -> Result<(), ProjectError> {
         ProjectCommands::Commands(arguments) => commands(arguments),
         ProjectCommands::Run(arguments) => run_action(arguments),
         ProjectCommands::Understand(arguments) => understand(arguments),
+        ProjectCommands::Responses { command } => responses(command),
+        ProjectCommands::Insight { command } => insight(command),
+        ProjectCommands::Annotate(arguments) => annotate(arguments),
+        ProjectCommands::Response { command } => response(command),
         ProjectCommands::Create { kind, name } => {
             crate::create_project(&kind, &name).map_err(ProjectError::Output)
         }
@@ -312,20 +562,46 @@ fn commands(arguments: ProjectCommandsArgs) -> Result<(), ProjectError> {
 }
 
 fn understand(arguments: ProjectUnderstandArgs) -> Result<(), ProjectError> {
+    let intelligence = build_base_intelligence(&arguments.name)?;
+    if arguments.base {
+        return render_base_intelligence(&intelligence, arguments.json);
+    }
+    let responses = operator_store()?
+        .list_operator_responses(&arguments.name)
+        .map_err(|error| ProjectError::Authority(error.to_string()))?;
+    let resolved = OperatorAuthorityResolver
+        .resolve(&intelligence, &responses, arguments.explain)
+        .map_err(|error| ProjectError::Intelligence(error.to_string()))?;
+    if arguments.require_resolved && resolved.resolution_status == ResolutionStatus::Unresolved {
+        return Err(ProjectError::UnresolvedAuthority);
+    }
+    if arguments.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&resolved)
+                .map_err(|error| ProjectError::Serialization(error.to_string()))?
+        );
+    } else {
+        print!("{}", render_resolved_text(&resolved, arguments.explain));
+    }
+    Ok(())
+}
+
+fn build_base_intelligence(project_name: &str) -> Result<ProjectIntelligence, ProjectError> {
     let config = load_project_config()?;
-    let root = resolve_registered_project(&config, &arguments.name)?;
+    let root = resolve_registered_project(&config, project_name)?;
     // Understanding is intentionally based on the no-process context mode. A
     // separate bounded Git-state capture is used only to project the validity
     // of an already persisted verification; no project action is launched.
     let report = context::analyze_without_processes(&root).map_err(ProjectError::Context)?;
     let actions = absolutize_actions(resolve_actions(&report.context.validation_commands), &root);
     let project = ProjectReference {
-        name: arguments.name.clone(),
+        name: project_name.to_string(),
         root: root.clone(),
     };
     let current_state = current_state_fingerprint(&project, &actions);
     let input = intelligence_input(
-        &arguments.name,
+        project_name,
         &report.context,
         &project,
         actions,
@@ -335,16 +611,578 @@ fn understand(arguments: ProjectUnderstandArgs) -> Result<(), ProjectError> {
     let intelligence = DeterministicProjectIntelligenceAnalyzer
         .analyze(&input)
         .map_err(|error| ProjectError::Intelligence(error.to_string()))?;
+    Ok(intelligence)
+}
 
-    if arguments.json {
+fn render_base_intelligence(
+    intelligence: &ProjectIntelligence,
+    json: bool,
+) -> Result<(), ProjectError> {
+    if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&intelligence)
+            serde_json::to_string_pretty(intelligence)
                 .map_err(|error| ProjectError::Serialization(error.to_string()))?
         );
     } else {
-        print!("{}", render_intelligence_text(&intelligence));
+        print!("{}", render_intelligence_text(intelligence));
     }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct OperatorResponsesReport {
+    schema_version: u32,
+    project: String,
+    responses: Vec<OperatorResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct OperatorResponseReport {
+    schema_version: u32,
+    project: String,
+    response: OperatorResponse,
+}
+
+#[derive(Debug, Serialize)]
+struct OperatorHistoryReport {
+    schema_version: u32,
+    project: String,
+    history: Vec<OperatorResponseHistoryEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct OperatorPreviewReport {
+    schema_version: u32,
+    project: String,
+    response: OperatorResponse,
+    target_matches: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_target: Option<OperatorTargetBinding>,
+}
+
+fn responses(command: ProjectResponsesCommands) -> Result<(), ProjectError> {
+    match command {
+        ProjectResponsesCommands::List(arguments) => {
+            let responses = projected_operator_responses(&arguments.project)?;
+            if arguments.json {
+                print_json(&OperatorResponsesReport {
+                    schema_version: OPERATOR_RESPONSE_SCHEMA_VERSION,
+                    project: arguments.project,
+                    responses,
+                })
+            } else {
+                print_response_list(&arguments.project, &responses);
+                Ok(())
+            }
+        }
+        ProjectResponsesCommands::Show(arguments) => {
+            let id = response_id(&arguments.response)?;
+            let response = load_projected_operator_response(&arguments.project, &id)?;
+            render_response(&arguments.project, response, arguments.json)
+        }
+        ProjectResponsesCommands::History(arguments) => {
+            ensure_registered_project(&arguments.project)?;
+            let history = operator_store()?
+                .operator_response_history(&arguments.project)
+                .map_err(authority_error)?;
+            if arguments.json {
+                print_json(&OperatorHistoryReport {
+                    schema_version: OPERATOR_RESPONSE_SCHEMA_VERSION,
+                    project: arguments.project,
+                    history,
+                })
+            } else {
+                print_response_history(&arguments.project, &history);
+                Ok(())
+            }
+        }
+    }
+}
+
+fn insight(command: ProjectInsightCommands) -> Result<(), ProjectError> {
+    match command {
+        ProjectInsightCommands::Accept(arguments) => {
+            let base = build_base_intelligence(&arguments.project)?;
+            let target = resolve_authority_target(&base, &arguments.insight)?;
+            let payload = OperatorResponsePayload::Acceptance(AcceptancePayload {
+                reason: arguments.reason,
+                confidence: arguments.confidence.map(operator_confidence),
+            });
+            create_operator_response(
+                &arguments.project,
+                target,
+                operator_identity(arguments.operator)?,
+                payload,
+                optional_response_id(arguments.supersedes.as_deref())?,
+                arguments.json,
+            )
+        }
+        ProjectInsightCommands::Reject(arguments) => {
+            let base = build_base_intelligence(&arguments.project)?;
+            let target = resolve_authority_target(&base, &arguments.insight)?;
+            let payload = OperatorResponsePayload::Rejection(RejectionPayload {
+                reason: arguments.reason,
+                intent: arguments.intent.map(operator_intent),
+                confidence: arguments.confidence.map(operator_confidence),
+            });
+            create_operator_response(
+                &arguments.project,
+                target,
+                operator_identity(arguments.operator)?,
+                payload,
+                optional_response_id(arguments.supersedes.as_deref())?,
+                arguments.json,
+            )
+        }
+        ProjectInsightCommands::Correct(arguments) => {
+            let base = build_base_intelligence(&arguments.project)?;
+            let target = resolve_authority_target(&base, &arguments.insight)?;
+            let payload = OperatorResponsePayload::Correction(CorrectionPayload {
+                replacement_statement: arguments.statement,
+                reason: arguments.reason,
+                intent: operator_intent(arguments.intent),
+                confidence: arguments.confidence.map(operator_confidence),
+            });
+            create_operator_response(
+                &arguments.project,
+                target,
+                operator_identity(arguments.operator)?,
+                payload,
+                optional_response_id(arguments.supersedes.as_deref())?,
+                arguments.json,
+            )
+        }
+        ProjectInsightCommands::Dispute(arguments) => {
+            let base = build_base_intelligence(&arguments.project)?;
+            let target = resolve_authority_target(&base, &arguments.insight)?;
+            let payload = OperatorResponsePayload::Dispute(DisputePayload {
+                reason: arguments.reason,
+                intent: arguments.intent.map(operator_intent),
+                confidence: arguments.confidence.map(operator_confidence),
+            });
+            create_operator_response(
+                &arguments.project,
+                target,
+                operator_identity(arguments.operator)?,
+                payload,
+                optional_response_id(arguments.supersedes.as_deref())?,
+                arguments.json,
+            )
+        }
+    }
+}
+
+fn annotate(arguments: ProjectAnnotateArgs) -> Result<(), ProjectError> {
+    let base = build_base_intelligence(&arguments.project)?;
+    let target = resolve_authority_target(&base, &arguments.target)?;
+    let payload = OperatorResponsePayload::Annotation(AnnotationPayload {
+        statement: arguments.statement,
+        intent: operator_intent(arguments.intent),
+        scope: if arguments.state_bound {
+            AnnotationScope::StateBound
+        } else {
+            AnnotationScope::Persistent
+        },
+        confidence: arguments.confidence.map(operator_confidence),
+    });
+    create_operator_response(
+        &arguments.project,
+        target,
+        operator_identity(arguments.operator)?,
+        payload,
+        None,
+        arguments.json,
+    )
+}
+
+fn response(command: ProjectResponseCommands) -> Result<(), ProjectError> {
+    match command {
+        ProjectResponseCommands::Edit(arguments) => edit_response(arguments),
+        ProjectResponseCommands::Preview(arguments) => preview_response(arguments),
+        ProjectResponseCommands::Delete(arguments) => {
+            ensure_registered_project(&arguments.project)?;
+            let id = response_id(&arguments.response)?;
+            operator_store()?
+                .delete_operator_response_draft(&arguments.project, &id)
+                .map_err(authority_error)?;
+            if arguments.json {
+                print_json(&serde_json::json!({
+                    "schema_version": OPERATOR_RESPONSE_SCHEMA_VERSION,
+                    "project": arguments.project,
+                    "deleted_response": id,
+                }))
+            } else {
+                println!("Deleted draft response {id}.");
+                Ok(())
+            }
+        }
+        ProjectResponseCommands::Activate(arguments) => {
+            let base = build_base_intelligence(&arguments.project)?;
+            let id = response_id(&arguments.response)?;
+            let stored = load_operator_response(&arguments.project, &id)?;
+            let target = resolve_bound_target(&base, &stored.target)?;
+            let supersedes =
+                optional_response_id(arguments.supersedes.as_deref())?.or(stored.supersedes);
+            let activated = operator_store()?
+                .activate_operator_response(&arguments.project, &id, &target, supersedes)
+                .map_err(authority_error)?;
+            render_response(&arguments.project, activated, arguments.json)
+        }
+        ProjectResponseCommands::Retire(arguments) => {
+            ensure_registered_project(&arguments.project)?;
+            let id = response_id(&arguments.response)?;
+            let retired = operator_store()?
+                .retire_operator_response(&arguments.project, &id)
+                .map_err(authority_error)?;
+            render_response(&arguments.project, retired, arguments.json)
+        }
+        ProjectResponseCommands::Withdraw(arguments) => {
+            ensure_registered_project(&arguments.project)?;
+            let id = response_id(&arguments.response)?;
+            let withdrawn = operator_store()?
+                .withdraw_operator_response(&arguments.project, &id)
+                .map_err(authority_error)?;
+            render_response(&arguments.project, withdrawn, arguments.json)
+        }
+        ProjectResponseCommands::Reaffirm(arguments) => {
+            let base = build_base_intelligence(&arguments.project)?;
+            let id = response_id(&arguments.response)?;
+            let stored = load_operator_response(&arguments.project, &id)?;
+            let target = resolve_bound_target(&base, &stored.target)?;
+            let reaffirmed = operator_store()?
+                .reaffirm_operator_response(&arguments.project, &id, target)
+                .map_err(authority_error)?;
+            render_response(&arguments.project, reaffirmed, arguments.json)
+        }
+    }
+}
+
+fn edit_response(arguments: ProjectResponseEditArgs) -> Result<(), ProjectError> {
+    ensure_registered_project(&arguments.project)?;
+    let id = response_id(&arguments.response)?;
+    let existing = load_operator_response(&arguments.project, &id)?;
+    let confidence = arguments.confidence.map(operator_confidence);
+    let intent = arguments.intent.map(operator_intent);
+    let payload = match existing.payload {
+        OperatorResponsePayload::Rejection(mut payload) => {
+            if let Some(reason) = arguments.reason {
+                payload.reason = reason;
+            }
+            if let Some(intent) = intent {
+                payload.intent = Some(intent);
+            }
+            if let Some(confidence) = confidence {
+                payload.confidence = Some(confidence);
+            }
+            OperatorResponsePayload::Rejection(payload)
+        }
+        OperatorResponsePayload::Correction(mut payload) => {
+            if let Some(statement) = arguments.statement {
+                payload.replacement_statement = statement;
+            }
+            if let Some(reason) = arguments.reason {
+                payload.reason = Some(reason);
+            }
+            if let Some(intent) = intent {
+                payload.intent = intent;
+            }
+            if let Some(confidence) = confidence {
+                payload.confidence = Some(confidence);
+            }
+            OperatorResponsePayload::Correction(payload)
+        }
+        OperatorResponsePayload::Dispute(mut payload) => {
+            if let Some(reason) = arguments.reason {
+                payload.reason = reason;
+            }
+            if let Some(intent) = intent {
+                payload.intent = Some(intent);
+            }
+            if let Some(confidence) = confidence {
+                payload.confidence = Some(confidence);
+            }
+            OperatorResponsePayload::Dispute(payload)
+        }
+        OperatorResponsePayload::Annotation(_) | OperatorResponsePayload::Acceptance(_) => {
+            return Err(ProjectError::Authority(
+                "only draft-first rejection, correction, and dispute responses are editable"
+                    .to_string(),
+            ));
+        }
+    };
+    let edited = operator_store()?
+        .edit_operator_response_draft(&arguments.project, &id, payload)
+        .map_err(authority_error)?;
+    render_response(&arguments.project, edited, arguments.json)
+}
+
+fn preview_response(arguments: ProjectResponseShowArgs) -> Result<(), ProjectError> {
+    let base = build_base_intelligence(&arguments.project)?;
+    let id = response_id(&arguments.response)?;
+    let response = load_projected_operator_response(&arguments.project, &id)?;
+    let current_target = resolve_bound_target(&base, &response.target).ok();
+    let target_matches = current_target
+        .as_ref()
+        .is_some_and(|target| response.target.exact_match(target));
+    let preview = OperatorPreviewReport {
+        schema_version: OPERATOR_RESPONSE_SCHEMA_VERSION,
+        project: arguments.project,
+        response,
+        target_matches,
+        current_target,
+    };
+    if arguments.json {
+        print_json(&preview)
+    } else {
+        println!("Response preview");
+        println!("  ID: {}", preview.response.id);
+        println!("  Type: {}", preview.response.payload.kind());
+        println!("  Lifecycle: {}", preview.response.lifecycle.as_str());
+        println!("  Target: {}", preview.response.target.target_id);
+        println!(
+            "  Target fingerprint: {}",
+            preview.response.target.evidence_fingerprint
+        );
+        println!(
+            "  Current target matches: {}",
+            if preview.target_matches { "yes" } else { "no" }
+        );
+        Ok(())
+    }
+}
+
+fn create_operator_response(
+    project: &str,
+    target: OperatorTargetBinding,
+    operator: OperatorIdentity,
+    payload: OperatorResponsePayload,
+    supersedes: Option<OperatorResponseId>,
+    json: bool,
+) -> Result<(), ProjectError> {
+    let mut request = NewOperatorResponse::new(project, target.clone(), operator, payload);
+    if let Some(supersedes) = supersedes {
+        request = request.with_supersedes(supersedes);
+    }
+    let response = operator_store()?
+        .create_operator_response(request)
+        .map_err(authority_error)?;
+    if !json {
+        println!("Target: {}", target.target_id);
+        println!("Target fingerprint: {}", target.evidence_fingerprint);
+    }
+    render_response(project, response, json)
+}
+
+fn resolve_authority_target(
+    base: &ProjectIntelligence,
+    selector: &str,
+) -> Result<OperatorTargetBinding, ProjectError> {
+    let targets =
+        authority_targets(base).map_err(|error| ProjectError::Intelligence(error.to_string()))?;
+    let exact = targets
+        .iter()
+        .filter(|target| target.target_id == selector)
+        .cloned()
+        .collect::<Vec<_>>();
+    if let [target] = exact.as_slice() {
+        return Ok(target.clone());
+    }
+    let friendly = targets
+        .into_iter()
+        .filter(|target| target.rule_id.as_deref() == Some(selector))
+        .collect::<Vec<_>>();
+    match friendly.as_slice() {
+        [target] => Ok(target.clone()),
+        [] => Err(ProjectError::TargetNotFound(selector.to_string())),
+        _ => Err(ProjectError::TargetAmbiguous(selector.to_string())),
+    }
+}
+
+fn resolve_bound_target(
+    base: &ProjectIntelligence,
+    binding: &OperatorTargetBinding,
+) -> Result<OperatorTargetBinding, ProjectError> {
+    if let Some(rule_id) = &binding.rule_id {
+        resolve_authority_target(base, rule_id)
+    } else {
+        resolve_authority_target(base, &binding.target_id)
+    }
+}
+
+fn operator_store() -> Result<KnowledgeStore, ProjectError> {
+    KnowledgeStore::open_default().map_err(|error| ProjectError::Authority(error.to_string()))
+}
+
+fn ensure_registered_project(project: &str) -> Result<(), ProjectError> {
+    let config = load_project_config()?;
+    resolve_registered_project(&config, project).map(|_| ())
+}
+
+fn load_operator_response(
+    project: &str,
+    id: &OperatorResponseId,
+) -> Result<OperatorResponse, ProjectError> {
+    operator_store()?
+        .get_operator_response(project, id)
+        .map_err(authority_error)?
+        .ok_or_else(|| ProjectError::Authority(format!("operator response not found: {id}")))
+}
+
+fn projected_operator_responses(project: &str) -> Result<Vec<OperatorResponse>, ProjectError> {
+    let base = build_base_intelligence(project)?;
+    let mut responses = operator_store()?
+        .list_operator_responses(project)
+        .map_err(authority_error)?;
+    let resolved = OperatorAuthorityResolver
+        .resolve(&base, &responses, true)
+        .map_err(|error| ProjectError::Intelligence(error.to_string()))?;
+    let lifecycle = resolved
+        .explanations
+        .into_iter()
+        .map(|explanation| (explanation.response_id, explanation.lifecycle))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for response in &mut responses {
+        if let Some(projected) = lifecycle.get(&response.id) {
+            response.lifecycle = *projected;
+        }
+    }
+    Ok(responses)
+}
+
+fn load_projected_operator_response(
+    project: &str,
+    id: &OperatorResponseId,
+) -> Result<OperatorResponse, ProjectError> {
+    projected_operator_responses(project)?
+        .into_iter()
+        .find(|response| response.id == *id)
+        .ok_or_else(|| ProjectError::Authority(format!("operator response not found: {id}")))
+}
+
+fn response_id(value: &str) -> Result<OperatorResponseId, ProjectError> {
+    OperatorResponseId::parse(value.to_string()).map_err(authority_error)
+}
+
+fn optional_response_id(value: Option<&str>) -> Result<Option<OperatorResponseId>, ProjectError> {
+    value.map(response_id).transpose()
+}
+
+fn operator_identity(arguments: OperatorArgs) -> Result<OperatorIdentity, ProjectError> {
+    match arguments.operator {
+        Some(stable_key) => {
+            let display_name = arguments
+                .operator_name
+                .unwrap_or_else(|| stable_key.clone());
+            OperatorIdentity::named(stable_key, display_name).map_err(authority_error)
+        }
+        None => OperatorIdentity::local("Local operator").map_err(authority_error),
+    }
+}
+
+fn operator_confidence(value: OperatorConfidenceArg) -> OperatorConfidence {
+    match value {
+        OperatorConfidenceArg::Certain => OperatorConfidence::Certain,
+        OperatorConfidenceArg::High => OperatorConfidence::High,
+        OperatorConfidenceArg::Medium => OperatorConfidence::Medium,
+        OperatorConfidenceArg::Tentative => OperatorConfidence::Tentative,
+    }
+}
+
+fn operator_intent(value: OperatorIntentArg) -> OperatorIntent {
+    match value {
+        OperatorIntentArg::Architecture => OperatorIntent::Architecture,
+        OperatorIntentArg::Decision => OperatorIntent::Decision,
+        OperatorIntentArg::Preference => OperatorIntent::Preference,
+        OperatorIntentArg::TemporaryConstraint => OperatorIntent::TemporaryConstraint,
+        OperatorIntentArg::Experiment => OperatorIntent::Experiment,
+        OperatorIntentArg::Context => OperatorIntent::Context,
+    }
+}
+
+fn authority_error(error: astra_knowledge::KnowledgeError) -> ProjectError {
+    ProjectError::Authority(error.to_string())
+}
+
+fn render_response(
+    project: &str,
+    response: OperatorResponse,
+    json: bool,
+) -> Result<(), ProjectError> {
+    if json {
+        return print_json(&OperatorResponseReport {
+            schema_version: OPERATOR_RESPONSE_SCHEMA_VERSION,
+            project: project.to_string(),
+            response,
+        });
+    }
+    println!("Operator response");
+    println!("  ID: {}", response.id);
+    println!("  Type: {}", response.payload.kind());
+    println!("  Lifecycle: {}", response.lifecycle.as_str());
+    println!("  Target: {}", response.target.target_id);
+    println!(
+        "  Target fingerprint: {}",
+        response.target.evidence_fingerprint
+    );
+    Ok(())
+}
+
+fn print_response_list(project: &str, responses: &[OperatorResponse]) {
+    println!("Operator responses for {project}");
+    if responses.is_empty() {
+        println!("No operator responses.");
+        return;
+    }
+    println!("RESPONSE               TYPE        LIFECYCLE");
+    for response in responses {
+        println!(
+            "{:<22} {:<11} {}",
+            response.id,
+            response.payload.kind(),
+            response.lifecycle.as_str()
+        );
+    }
+}
+
+fn print_response_history(project: &str, history: &[OperatorResponseHistoryEntry]) {
+    println!("Operator response history for {project}");
+    if history.is_empty() {
+        println!("No committed operator-response transactions.");
+        return;
+    }
+    println!("TRANSACTION                 OPERATION     RESPONSE");
+    for entry in history {
+        println!(
+            "{:<27} {:<13} {}",
+            entry.transaction_id,
+            history_operation(entry.operation),
+            entry
+                .response
+                .as_ref()
+                .map_or("-", |response| response.id.as_str())
+        );
+    }
+}
+
+fn history_operation(operation: OperatorHistoryOperation) -> &'static str {
+    match operation {
+        OperatorHistoryOperation::Create => "create",
+        OperatorHistoryOperation::EditDraft => "edit_draft",
+        OperatorHistoryOperation::Activate => "activate",
+        OperatorHistoryOperation::DeleteDraft => "delete_draft",
+        OperatorHistoryOperation::Retire => "retire",
+        OperatorHistoryOperation::Withdraw => "withdraw",
+        OperatorHistoryOperation::Reaffirm => "reaffirm",
+    }
+}
+
+fn print_json(value: &impl Serialize) -> Result<(), ProjectError> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value)
+            .map_err(|error| ProjectError::Serialization(error.to_string()))?
+    );
     Ok(())
 }
 
