@@ -24,3 +24,7 @@ Use this file for small engineering decisions that do not require a full ADR.
   `astra-intelligence`. It receives explicit normalized inputs at the CLI
   boundary and produces runtime graph edges and deterministic insights without
   scanning, executing, reading storage, planning, or mutating knowledge.
+- Operator authority is stored separately from knowledge claims. It may govern
+  derived interpretations but cannot rewrite observations. Resolution is a
+  pure projection over an unchanged base report and committed, historical
+  operator responses.

@@ -11,7 +11,11 @@ AstraOS is a native Rust command center for a macOS development workstation.
 - `astra project inspect <name>`
 - `astra project commands <name> [--json]`
 - `astra project run <name> <action> --dry-run [--json]`
-- `astra project understand <name> [--json]`
+- `astra project understand <name> [--base|--explain] [--require-resolved] [--json]`
+- `astra project responses list|show|history`
+- `astra project insight accept|reject|correct|dispute`
+- `astra project annotate <name> <target>`
+- `astra project response edit|preview|delete|activate|retire|withdraw|reaffirm`
 - `astra project create <node|python|static> <name>`
 - `astra context [path] [--json]`
 - `astra knowledge list`
@@ -51,6 +55,7 @@ cargo build --release
 11. State-Bound Controlled Check Execution
 12. Knowledge Foundation
 13. Project Intelligence Foundation
+13.1. Operator Authority Foundation
 
 The original roadmap also included the following pre-context milestones:
 

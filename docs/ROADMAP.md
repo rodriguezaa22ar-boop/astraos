@@ -50,6 +50,8 @@
 - Deterministic Project Intelligence Foundation
 - Read-only `astra project understand` reports
 - Evidence-backed runtime relationship graph and grounded insights
+- Operator Authority Foundation with historical responses, lifecycle, and
+  resolved understanding
 
 ## Future
 
