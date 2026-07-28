@@ -12,6 +12,9 @@ pub(crate) struct RuleContext {
     pub workspace_entity: Option<EntityId>,
     pub discovered_actions: BTreeSet<String>,
     pub controlled_actions: BTreeSet<String>,
+    pub check_action_entity: Option<EntityId>,
+    pub check_controlled_execution_capability_entity: Option<EntityId>,
+    pub restricted_actions: Vec<RestrictedActionRuleInput>,
     pub verification: Option<VerificationRuleInput>,
     pub package_structure_evidence: bool,
 }
@@ -21,6 +24,13 @@ pub(crate) struct VerificationRuleInput {
     pub claim_id: String,
     pub validity: VerificationValidity,
     pub entity: EntityId,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RestrictedActionRuleInput {
+    pub action_id: String,
+    pub action_entity: Option<EntityId>,
+    pub dry_run_only_capability_entity: Option<EntityId>,
 }
 
 #[derive(Debug, Default)]
@@ -104,7 +114,15 @@ impl InsightRule for ControlledVerification {
                         claim_id: verification.claim_id.clone(),
                     },
                 ],
-                vec![verification.entity.clone()],
+                std::iter::once(verification.entity.clone())
+                    .chain(context.check_action_entity.iter().cloned())
+                    .chain(
+                        context
+                            .check_controlled_execution_capability_entity
+                            .iter()
+                            .cloned(),
+                    )
+                    .collect(),
             )?],
             risks: Vec::new(),
         })
@@ -118,27 +136,28 @@ impl InsightRule for RestrictedActions {
     }
 
     fn evaluate(&self, context: &RuleContext) -> Result<RuleOutput, IntelligenceError> {
-        if context.discovered_actions.len() <= context.controlled_actions.len() {
+        if context.restricted_actions.is_empty() {
             return Ok(RuleOutput::default());
         }
-        let restricted = context
-            .discovered_actions
-            .difference(&context.controlled_actions)
-            .next()
-            .cloned();
-        let Some(action_id) = restricted else {
-            return Ok(RuleOutput::default());
-        };
+        let mut evidence = Vec::new();
+        let mut related_entities = Vec::new();
+        for action in &context.restricted_actions {
+            evidence.push(IntelligenceEvidenceRef::Action {
+                action_id: action.action_id.clone(),
+            });
+            evidence.push(IntelligenceEvidenceRef::ExecutionCapability {
+                action_id: action.action_id.clone(),
+            });
+            related_entities.extend(action.action_entity.iter().cloned());
+            related_entities.extend(action.dry_run_only_capability_entity.iter().cloned());
+        }
         Ok(RuleOutput {
             insights: vec![ProjectInsight::new(
                 self.id(),
                 "Some project actions are discoverable but remain restricted from direct execution.",
                 IntelligenceConfidence::Certain,
-                vec![
-                    IntelligenceEvidenceRef::Action { action_id: action_id.clone() },
-                    IntelligenceEvidenceRef::ExecutionCapability { action_id },
-                ],
-                Vec::new(),
+                evidence,
+                related_entities,
             )?],
             risks: Vec::new(),
         })
@@ -201,7 +220,7 @@ impl InsightRule for ModularPackageStructure {
         Ok(RuleOutput {
             insights: vec![ProjectInsight::new(
                 self.id(),
-                "The project uses a modular package structure.",
+                "The project is divided into multiple workspace packages.",
                 IntelligenceConfidence::Certain,
                 vec![IntelligenceEvidenceRef::context("workspace.packages")],
                 context.package_entities.clone(),
@@ -229,6 +248,9 @@ mod tests {
                 workspace_entity: None,
                 discovered_actions: BTreeSet::new(),
                 controlled_actions: BTreeSet::new(),
+                check_action_entity: None,
+                check_controlled_execution_capability_entity: None,
+                restricted_actions: Vec::new(),
                 verification: Some(VerificationRuleInput {
                     claim_id: "k1-demo".to_string(),
                     validity: VerificationValidity::Stale,

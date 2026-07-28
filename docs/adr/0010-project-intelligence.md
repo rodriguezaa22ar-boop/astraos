@@ -50,8 +50,8 @@ boundary and maps execution support into a neutral input, so
 
 The initial rule set is deliberately narrow: multi-package workspace,
 controlled evidence-producing verification, restricted discovered actions,
-stale verification, unavailable operator decisions, and modular package
-structure. No AI, semantic search, graph database, operator editing, planning,
+stale verification, unavailable operator decisions, and multiple workspace
+packages. No AI, semantic search, graph database, operator editing, planning,
 or orchestration is introduced.
 
 ## Alternatives considered

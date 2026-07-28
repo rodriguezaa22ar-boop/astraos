@@ -55,7 +55,7 @@ content, command output, absolute path, raw knowledge value, or secret data.
 - `PI-003`: discoverable actions restricted from direct execution
 - `PI-004`: latest verification is stale, with a separate risk
 - `PI-005`: no operator-decision input becomes a limitation, not a fact
-- `PI-006`: modular package structure when explicit workspace structure exists
+- `PI-006`: multiple workspace packages when explicit workspace structure exists
 
 ## CLI and read-only behavior
 

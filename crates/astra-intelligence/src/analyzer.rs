@@ -1,4 +1,4 @@
-use crate::rule::{default_rules, RuleContext, VerificationRuleInput};
+use crate::rule::{default_rules, RestrictedActionRuleInput, RuleContext, VerificationRuleInput};
 use crate::{
     ArchitectureModel, Availability, CapabilityModel, EntityId, EntityKind, IdentityModel,
     InformationClassification, IntelligenceConfidence, IntelligenceError, IntelligenceEvidenceRef,
@@ -43,7 +43,7 @@ impl ProjectIntelligenceAnalyzer for DeterministicProjectIntelligenceAnalyzer {
         build_languages(&mut graph, &input.context, &project)?;
         build_build_systems(&mut graph, &input.context, &project)?;
         build_ci(&mut graph, &input.context, &project)?;
-        build_actions_and_capabilities(&mut graph, input, &project)?;
+        let action_entities = build_actions_and_capabilities(&mut graph, input, &project)?;
         let knowledge = build_knowledge(&mut graph, input, &project)?;
 
         let workspace_detected = workspace.is_some();
@@ -58,6 +58,22 @@ impl ProjectIntelligenceAnalyzer for DeterministicProjectIntelligenceAnalyzer {
                 .map(|action| action.id.clone())
                 .collect(),
             controlled_actions: sorted_set(&input.execution_capabilities.controlled_actions),
+            check_action_entity: action_entities.actions.get("check").cloned(),
+            check_controlled_execution_capability_entity: action_entities
+                .controlled_execution_capabilities
+                .get("check")
+                .cloned(),
+            restricted_actions: sorted_set(&input.execution_capabilities.dry_run_only_actions)
+                .into_iter()
+                .map(|action_id| RestrictedActionRuleInput {
+                    action_entity: action_entities.actions.get(&action_id).cloned(),
+                    dry_run_only_capability_entity: action_entities
+                        .dry_run_only_capabilities
+                        .get(&action_id)
+                        .cloned(),
+                    action_id,
+                })
+                .collect(),
             verification: knowledge.latest_verification.clone(),
             package_structure_evidence,
         };
@@ -383,11 +399,19 @@ fn build_ci(
     Ok(())
 }
 
+#[derive(Default)]
+struct ActionEntityReferences {
+    actions: BTreeMap<String, EntityId>,
+    controlled_execution_capabilities: BTreeMap<String, EntityId>,
+    dry_run_only_capabilities: BTreeMap<String, EntityId>,
+}
+
 fn build_actions_and_capabilities(
     graph: &mut GraphBuilder,
     input: &ProjectIntelligenceInput,
     project: &EntityId,
-) -> Result<(), IntelligenceError> {
+) -> Result<ActionEntityReferences, IntelligenceError> {
+    let mut references = ActionEntityReferences::default();
     let mut actions = input.actions.clone();
     actions.sort_by(|left, right| left.id.cmp(&right.id));
     for action in actions {
@@ -409,12 +433,13 @@ fn build_actions_and_capabilities(
         )?)?;
         graph.relationship(ProjectRelationship::new(
             ActionValidatesProject,
-            action_entity,
+            action_entity.clone(),
             project.clone(),
             InformationClassification::Observed,
             action.confidence,
             action.evidence,
         )?)?;
+        references.actions.insert(action.id, action_entity);
     }
     let capabilities = &input.execution_capabilities;
     for (kind, actions) in [
@@ -444,18 +469,39 @@ fn build_actions_and_capabilities(
                 IntelligenceConfidence::Certain,
                 evidence.clone(),
             )?)?;
-            let action_entity = EntityId::derive(EntityKind::Action.as_str(), &[&action, &action]);
+            let action_entity = references.actions.get(&action).cloned().ok_or_else(|| {
+                IntelligenceError::InconsistentCapability(format!(
+                    "capability action is not discovered: {action}"
+                ))
+            })?;
             graph.relationship(ProjectRelationship::new(
                 kind,
-                capability,
+                capability.clone(),
                 action_entity,
                 InformationClassification::Observed,
                 IntelligenceConfidence::Certain,
                 evidence,
             )?)?;
+            match kind {
+                CapabilityAllowedForControlledExecution => {
+                    references
+                        .controlled_execution_capabilities
+                        .insert(action, capability);
+                }
+                CapabilityRestrictedToDryRun => {
+                    references
+                        .dry_run_only_capabilities
+                        .insert(action, capability);
+                }
+                _ => {
+                    return Err(IntelligenceError::InvalidInput(
+                        "unsupported execution capability kind".to_string(),
+                    ));
+                }
+            }
         }
     }
-    Ok(())
+    Ok(references)
 }
 
 #[derive(Default)]
@@ -786,18 +832,89 @@ mod tests {
             .insights
             .iter()
             .any(|insight| insight.rule_id.as_str() == "PI-001"));
-        assert!(first
+        let pi_002 = first
             .insights
             .iter()
-            .any(|insight| insight.rule_id.as_str() == "PI-002"));
-        assert!(first
+            .find(|insight| insight.rule_id.as_str() == "PI-002")
+            .expect("PI-002 insight");
+        assert!(pi_002.related_entities.iter().any(|id| {
+            first.entities.iter().any(|entity| {
+                entity.id == *id && entity.kind == EntityKind::Action && entity.name == "check"
+            })
+        }));
+        assert!(pi_002.related_entities.iter().any(|id| {
+            first.entities.iter().any(|entity| {
+                entity.id == *id
+                    && entity.kind == EntityKind::ExecutionCapability
+                    && entity.name == "controlled execution: check"
+            })
+        }));
+        assert!(pi_002.related_entities.iter().any(|id| {
+            first
+                .entities
+                .iter()
+                .any(|entity| entity.id == *id && entity.kind == EntityKind::Verification)
+        }));
+
+        let pi_003 = first
             .insights
             .iter()
-            .any(|insight| insight.rule_id.as_str() == "PI-003"));
-        assert!(first
+            .find(|insight| insight.rule_id.as_str() == "PI-003")
+            .expect("PI-003 insight");
+        assert!(!pi_003.related_entities.is_empty());
+        let pi_003_entities = pi_003
+            .related_entities
+            .iter()
+            .filter_map(|id| first.entities.iter().find(|entity| entity.id == *id))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pi_003_entities
+                .iter()
+                .filter(|entity| entity.kind == EntityKind::Action)
+                .count(),
+            2
+        );
+        let pi_003_names = pi_003_entities
+            .iter()
+            .map(|entity| entity.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(pi_003_names.contains(&"build"));
+        assert!(pi_003_names.contains(&"test"));
+        assert!(pi_003_names.contains(&"dry run only: build"));
+        assert!(pi_003_names.contains(&"dry run only: test"));
+        assert_eq!(
+            pi_003_entities
+                .iter()
+                .filter(|entity| entity.kind == EntityKind::ExecutionCapability)
+                .count(),
+            2
+        );
+
+        let pi_006 = first
             .insights
             .iter()
-            .any(|insight| insight.rule_id.as_str() == "PI-006"));
+            .find(|insight| insight.rule_id.as_str() == "PI-006")
+            .expect("PI-006 insight");
+        assert_eq!(
+            pi_006.statement,
+            "The project is divided into multiple workspace packages."
+        );
+    }
+
+    #[test]
+    fn analyzer_emits_only_derived_observations_not_recommendations() {
+        let report = DeterministicProjectIntelligenceAnalyzer
+            .analyze(&input("observations"))
+            .expect("analysis");
+        assert!(report
+            .insights
+            .iter()
+            .all(|insight| insight.classification == InformationClassification::Derived));
+        assert!(report.insights.iter().all(|insight| {
+            !insight.statement.contains(" should ")
+                && !insight.statement.contains("recommend")
+                && !insight.statement.contains("execute")
+        }));
     }
 
     #[test]
